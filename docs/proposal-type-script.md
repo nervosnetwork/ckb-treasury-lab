@@ -5,11 +5,8 @@ script in the CKB node**, in the same spirit as the built-in
 [Type ID](https://github.com/nervosnetwork/rfcs/blob/master/rfcs/0022-transaction-structure/0022-transaction-structure.md#type-id)
 script. It does **not** run inside CKB-VM.
 
-It is an alternative to the zkVM-based design described in
-[proposal-type-script.md](https://github.com/XuJiandong/ckb-vote-poc/blob/main/docs/proposal-type-script.md). The two designs solve the
-same problem — counting stake-weighted votes over a block range and unlocking a
-proposal cell when the proposal passes — but this variant removes the zkVM
-entirely.
+The script solves the problem of counting stake-weighted votes over a block range
+and unlocking a proposal cell when the proposal passes.
 
 A proposal cell represents a proposal, and once it appears on-chain, voting
 begins. Users cast votes in response to the proposal.
@@ -17,27 +14,20 @@ begins. Users cast votes in response to the proposal.
 
 ## Why an Embedded Script
 
-In the zkVM design, an SP1 guest program scans `duration + 1` consecutive blocks
-off-chain, tallies the votes, and produces a proof. On-chain, the proposal type
-script (running in CKB-VM) only verifies that small proof plus its committed
-public values.
-
-In this design there is no proof. Instead, the *same* tally logic runs natively
-inside the CKB node. Because the script is part of the node, it is not confined
-to the transaction's own data window (inputs, outputs, `cell_deps`,
-`header_deps`, `witnesses`). It reads the required blocks **directly from the
-node's own block storage**, which is already chain-validated.
+The tally logic runs natively inside the CKB node. Because the script is part of
+the node, it is not confined to the transaction's own data window (inputs,
+outputs, `cell_deps`, `header_deps`, `witnesses`). It reads the required blocks
+**directly from the node's own block storage**, which is already chain-validated.
 
 This has three important consequences:
 
 1. **No block data on-chain.** The `duration + 1` blocks never need to be carried
    in the witness (which would be infeasible for realistic durations). The node
    already has them.
-2. **No integrity checks needed.** The zkVM guest had to verify the `parent_hash`
-   chain and recompute each block's `transactions_root` because its block input
-   was untrusted. Blocks fetched from the node's store are already validated, so
-   these checks — the dominant cost in the benchmark (~28M of ~34M cycles per 500
-   blocks) — are **dropped**. Only the vote-tally traversal remains.
+2. **No integrity checks needed.** Blocks fetched from the node's store are
+   already validated, so there is no need to verify the `parent_hash` chain or
+   recompute each block's `transactions_root`. Only the vote-tally traversal
+   remains.
 3. **Cycle charging matters.** Because the work runs natively (not metered by
    CKB-VM instruction counting), the node must charge cycles explicitly and
    conservatively, proportional to the work performed, to prevent denial-of-service
@@ -66,9 +56,6 @@ The `args` is a single field:
   the first 20 bytes. The Type ID follows the standard construction:
   `blake160(first_input_out_point || output_index)`.
 
-> Compared with the zkVM design, the trailing `<32-byte SP1 verifying key hash>`
-> is **removed** — there is no guest program to identify.
-
 The corresponding lock script of the proposal cell should be an always-success
 lock script. All access control is delegated to this type script. Once a proposal
 passes, the cell can be consumed by anyone.
@@ -79,13 +66,11 @@ on both sides at once, to prevent updating an existing proposal cell.
 
 ## Witness
 
-This script reads **no witness**, on either creation or consumption. There is no
-`ProposalWitness`, no proof, and no `PublicValues` — all of which existed only to
-carry and verify the zkVM output.
+This script reads **no witness**, on either creation or consumption.
 
 ## Cell Data
 
-Cell data is unchanged from the zkVM design. It is a molecule structure:
+The cell data is a molecule structure:
 
 ```
 table Proposal {
@@ -136,9 +121,8 @@ deployed. The remaining constrained fields are under discussion.
 ### Consuming
 
 When the proposal cell is consumed (the type script is on the input side), the
-node determines the outcome by scanning the chain natively. No witness or proof
-is required, but the transaction must supply two `header_deps`, exactly as in the
-zkVM design.
+node determines the outcome by scanning the chain natively. No witness is
+required, but the transaction must supply two `header_deps`.
 
 1. **Reference the start and end blocks via `header_deps`.** The transaction
    provides `header_deps[0]` and `header_deps[1]`, corresponding to the start
@@ -227,9 +211,8 @@ Properties this accounting must satisfy:
   exceed the transaction's limit mid-scan, verification fails; work already done
   is bounded by the limit.
 - Because `transactions_root` recomputation and `parent_hash` chaining are **not**
-  performed (the blocks are already validated by the node), the dominant cost from
-  the zkVM benchmark disappears; the remaining cost is the traversal, hashing, and
-  map bookkeeping described above.
+  performed (the blocks are already validated by the node), the cost is limited to
+  the traversal, hashing, and map bookkeeping described above.
 
 ### DoS considerations
 
@@ -254,16 +237,15 @@ Properties this accounting must satisfy:
   changes any block in the range (or the start block's position) changes the
   result; this is inherent to reading chain state and is the same class of
   concern that `header_deps` addresses for ordinary scripts.
-- **Penalty on failure.** As in the zkVM design, if a proposal fails, no one can
-  recycle the cell. This is a deliberate penalty to discourage flooding the system
-  with proposals. Updating an existing proposal is likewise disallowed; the
-  recommended approach is to abandon it and create a new one.
+- **Penalty on failure.** If a proposal fails, no one can recycle the cell. This
+  is a deliberate penalty to discourage flooding the system with proposals.
+  Updating an existing proposal is likewise disallowed; the recommended approach
+  is to abandon it and create a new one.
 - **Reusable by third parties.** The proposal and vote scripts are not
   treasury-specific and can be integrated into third-party systems, which can
   reference this proposal type script.
 - **Vote-time eligibility.** A DAO deposit created during the voting window can be
-  used to vote, encouraging broader DAO participation, exactly as in the zkVM
-  design.
+  used to vote, encouraging broader DAO participation.
 
 ## Examples
 
@@ -318,7 +300,7 @@ Witnesses:
 
 ### Example 2: Consuming a Proposal Cell (Proposal Passed)
 
-No proof, no `PublicValues`, and no type-script witness are required. The
+No type-script witness is required. The
 transaction supplies `header_deps[0]` (start block) and `header_deps[1]` (end
 block); the node verifies `header_deps[0]` is `Proposal_Cell`'s creating block
 and `header_deps[1].number == header_deps[0].number + duration`, scans the
