@@ -84,15 +84,18 @@ table Proposal {
 }
 ```
 
-1. `duration` (N) in blocks: votes are valid only if cast within N consecutive
-   blocks from the proposal's start. Votes outside this range are not counted.
+1. `duration` (N) in blocks: the start block (the block where the proposal cell is
+   created) is reserved for the proposal itself; votes are valid only if cast within
+   the N consecutive blocks that follow. The full scanned range is therefore
+   `duration + 1` blocks: the start block plus the N voting blocks. Votes outside
+   the voting range are not counted.
 2. `vote_cell_code_hash` / `vote_cell_hash_type`: specifies the script a vote cell
    must use. Cells using a different script are not counted as valid votes.
 3. `description`: a plain-text UTF-8 description of the proposal.
-4. `receiver`: the address that will receive the CKB amount when the proposal
+4. `receiver`: the address that will receive the CKBytes when the proposal
    passes.
-5. `amount`: the amount of CKB to be received.
-6. `minimal_requirement`: minimum required CKB involved in voting.
+5. `amount`: the amount of CKBytes to be received.
+6. `minimal_requirement`: minimum required CKBytes involved in voting.
 
 Since proposal cells can be created by anyone, the fields `duration`,
 `vote_cell_code_hash` / `vote_cell_hash_type`, `amount`, and
@@ -127,7 +130,7 @@ required, but the transaction must supply two `header_deps`.
 1. **Reference the start and end blocks via `header_deps`.** The transaction
    provides `header_deps[0]` and `header_deps[1]`, corresponding to the start
    block hash and end block hash respectively. These hashes are referenced via
-   `header_dep`; if either is invalid, the reference fails and the transaction
+   `header_deps`; if either is invalid, the reference fails and the transaction
    cannot be constructed. The start block is the block that created the proposal
    cell being consumed — i.e. where voting began — and the node verifies that
    `header_deps[0]` matches the input's creating block (resolved from the input's
@@ -140,7 +143,9 @@ required, but the transaction must supply two `header_deps`.
    can only be settled **after the voting window has closed**.
 3. **Tally votes.** Run the `count_vote` algorithm (identical to the shared logic
    in [crates/verification/src/lib.rs](https://github.com/XuJiandong/ckb-vote-poc/blob/main/crates/verification/src/lib.rs)) over
-   every transaction in the `duration + 1` blocks:
+   every transaction in the N voting blocks (`header_deps[0].number + 1` through
+   `header_deps[1].number` inclusive). The start block (`header_deps[0]`) is the
+   proposal creation block and is excluded from vote counting.
    - A cell is counted as a vote when its type script `code_hash` /
      `hash_type` equals `vote_cell_code_hash` / `vote_cell_hash_type` from the
      proposal cell data **and** its type script `args` equals
@@ -271,8 +276,8 @@ Outputs:
                     code_hash: <secp256k1 code hash>
                     hash_type: 0x01                     # type
                     args: <20-byte blake160 of receiver pubkey>
-                amount: 1000                            # 1000 CKB
-                minimal_requirement: 5000               # 5000 CKB total vote weight
+                amount: 1000                            # 1000 CKBytes
+                minimal_requirement: 5000               # 5000 CKBytes total vote weight
         Type:
             code_hash: <reserved embedded proposal type script code_hash>
             hash_type: type
@@ -357,9 +362,10 @@ Header Deps:
     header_deps[1]: <end block hash>                    # start block + duration blocks later
 
 # No type-script witness. The node performs the scan:
-#   start_block   = header_deps[0]                       (must equal Proposal_Cell's creating block)
+#   start_block   = header_deps[0]                       (must equal Proposal_Cell's creating block; reserved for proposal, not counted for votes)
 #   end_block     = header_deps[1]                       (must exist; number == start_block.number + duration)
-#   scan blocks [start_block .. end_block] inclusive (duration + 1 blocks)
+#   scan blocks [start_block .. end_block] inclusive (1 proposal block + duration voting blocks = duration + 1 total)
+#   tally votes from voting blocks only [start_block+1 .. end_block]
 #   tally votes -> yes_vote > no_vote && yes_vote + no_vote > minimal_requirement * 1e8
 #   -> passed -> unlock
 

@@ -47,7 +47,7 @@ This script doesn't read witness.
 If no such `cell_dep` exists, the script fails.
 
 
-When a vote cell is consumed, there is no special meaning — it simply recycles the occupied CKB. The cell can be consumed at any time and does not need to wait until voting ends.
+When a vote cell is consumed, there is no special meaning — it simply recycles the occupied CKBytes. The cell can be consumed at any time and does not need to wait until voting ends.
 
 ## Design Notes
 
@@ -55,8 +55,7 @@ When a vote cell is consumed, there is no special meaning — it simply recycles
 
 * Once a proposal cell is consumed, it can no longer be referenced in `cell_deps`, which prevents new votes from being cast after the proposal closes.
 
-* the vote cells and referenced DAO deposits are not required to still be alive at settlement time.
-  Vote cells may be consumed immediately after voting, while the DAO deposit must remain alive for `duration` blocks.
+* the vote cells are not required to still be alive at settlement time. Vote cells may be consumed immediately after voting, while the DAO deposit must remain alive for `duration` blocks.
 
 ## Examples
 
@@ -141,7 +140,7 @@ Outputs:
         Data: <empty>
         Type: <none>
         Lock:
-            <voter's lock script>                       # voter reclaims the occupied CKB
+            <voter's lock script>                       # voter reclaims the occupied CKBytes
 
 Witnesses:
     WitnessArgs structure (at index matching Vote_Cell input):
