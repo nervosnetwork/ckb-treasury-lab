@@ -17,13 +17,13 @@ Since a proposal type script is unique across the entire chain, there is no ambi
 The cell data uses the following molecule structure:
 ```
 table Vote {
-    vote: Byte,
+    vote: byte,
     amount: Uint64,
     dao_index: Uint16Vec,
 }
 ```
 The `vote` field is a single byte: `0` for "NO" and `1` for "YES".
-The `amount` is the total CKB the owner holds in DAO deposits, in shannon. The `dao_index` contains the indices into `cell_deps` that point to those DAO deposit cells.
+The `amount` is the total CKBytes the owner holds in DAO deposits, in shannon. The `dao_index` contains the indices into `cell_deps` that point to those DAO deposit cells.
 
 
 ## Witness
@@ -113,8 +113,8 @@ Outputs:
 Witnesses:
     WitnessArgs structure (at index matching Funding_Cell input):
         Lock: <voter's signature>
-        Input Type: <none>
-        Output Type: <none>                             # vote type script does not read witness
+        input_type: <none>
+        output_type: <none>                             # vote type script does not read witness
 ```
 
 ---
@@ -146,6 +146,6 @@ Outputs:
 Witnesses:
     WitnessArgs structure (at index matching Vote_Cell input):
         Lock: <voter's signature>
-        Input Type: <none>
-        Output Type: <none>                             # vote type script does not read witness
+        input_type: <none>
+        output_type: <none>                             # vote type script does not read witness
 ```

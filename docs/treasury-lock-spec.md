@@ -5,7 +5,7 @@ This spec describes a lock script used in a treasury system.
 
 ## Introduction
 
-A cell with a treasury lock script is called a treasury cell. Treasury cells can only be created by consensus, similar to a [cell base](https://github.com/nervosnetwork/rfcs/blob/master/rfcs/0022-transaction-structure/0022-transaction-structure.md#exceptions). A treasury cell can be consumed via two methods: the burning method or the reward method.
+A cell with a treasury lock script is called a treasury cell. Treasury cells can only be created by consensus, similar to a [cellbase](https://github.com/nervosnetwork/rfcs/blob/master/rfcs/0022-transaction-structure/0022-transaction-structure.md#exceptions). A treasury cell can be consumed via two methods: the burning method or the reward method.
 
 ## Script
 
@@ -13,7 +13,7 @@ The lock script has the following structure:
 
 ```
 code_hash: <code hash to treasury lock script binary>
-hash_type: Type
+hash_type: type
 args: <8-byte block number>
 ```
 
@@ -39,7 +39,7 @@ Depending on the `consuming_method`, the treasury lock script can be unlocked vi
 
 ### Burning Method
 
-When this method is chosen, the script iterates over all headers using `ckb_load_header` (with `source = 4, header deps`) to fetch all block numbers. It parses each header to extract the block number, and the largest block number found is treated as the `current block number`. The transaction creator should put the latest block number in header_deps.
+When this method is chosen, the script iterates over all headers using `ckb_load_header` (with `source = 4, header_deps`) to fetch all block numbers. It parses each header to extract the block number, and the largest block number found is treated as the `current block number`. The transaction creator should put the latest block number in header_deps.
 
 A duration block count is then calculated by subtracting the block number in `args` from the `current block number`.
 
@@ -51,7 +51,7 @@ To encourage anyone to burn expired treasury cells, an incentive mechanism is in
 incentive amount = (duration block count - burn_expiry_blocks) * burn_incentive_rate + base_burn_incentive
 ```
 
-The config parameters `burn_incentive_rate` and `base_burn_incentive` are also stored in the config cell. The incentive amount is denominated in shannons, not CKB.
+The config parameters `burn_incentive_rate` and `base_burn_incentive` are also stored in the config cell. The incentive amount is denominated in shannon, not CKBytes.
 
 This design ensures the incentive amount grows over time if no one burns the cell, addressing the case where transaction fees exceed the incentive amount.
 
@@ -86,7 +86,7 @@ The config cell is deployed on-chain and locked by a different key than the trea
 The data in the config cell is encoded in molecule format as follows:
 
 ```
-table {
+table ConfigCell {
     burn_expiry_blocks: Uint32,
     burn_incentive_rate: Uint64,
     base_burn_incentive: Uint64,

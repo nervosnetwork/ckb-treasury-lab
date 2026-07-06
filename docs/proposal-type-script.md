@@ -292,8 +292,8 @@ Outputs:
 Witnesses:
     WitnessArgs structure:
         Lock: <proposer's signature>
-        Input Type: <none>
-        Output Type: <none>                             # no witness needed on creation
+        input_type: <none>
+        output_type: <none>                             # no witness needed on creation
 ```
 
 ---
@@ -366,6 +366,6 @@ Header Deps:
 Witnesses:
     WitnessArgs structure (for the Treasury_Cell / funding inputs, as needed):
         Lock: <signature(s) required by those inputs' lock scripts>
-        Input Type: <none>
-        Output Type: <none>
+        input_type: <none>
+        output_type: <none>
 ```
