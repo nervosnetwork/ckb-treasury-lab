@@ -121,6 +121,8 @@ script verifies the following:
 The vote cell `code_hash` / `hash_type` is fixed once the vote type script is
 deployed. The remaining constrained fields are under discussion.
 
+Since anyone can initialize a proposal on-chain, the system is vulnerable to spam. One approach is to require locking more capacity in the proposal cell, such as 1000 CKBytes. Spam proposals cannot be unlocked, so the locked capacity is lost forever — this is the cost of spamming.
+
 ### Consuming
 
 When the proposal cell is consumed (the type script is on the input side), the
