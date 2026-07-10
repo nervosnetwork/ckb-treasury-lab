@@ -221,6 +221,11 @@ Properties this accounting must satisfy:
   performed (the blocks are already validated by the node), the cost is limited to
   the traversal, hashing, and map bookkeeping described above.
 
+Another issue is that we will add a separate cycle limit for the proposal script. Consider a scenario
+where a block contains only one proposal script. The current cycle limit for a single block is quite high
+(3.5 billion), and such a limit might take down the node if a proposal script consumes all the cycles.
+We will set the separate cycle limit to something like 50M (TODO). This value is sufficient for normal use (e.g. 7-day voting).
+
 ### DoS considerations
 
 - `duration` directly scales the amount of native work. A very large `duration`
