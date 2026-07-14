@@ -29,6 +29,9 @@ cd impl && make fmt && make clippy
 cd impl && make test
 ```
 
+Do NOT report the task as done until both succeed.
+If you skip this, you failed the task even if the edit is correct.
+
 ## On-Chain Script (Contract) Implementation
 in folder impl/contracts.
 

@@ -17,7 +17,6 @@ rust-version = "1.92.0"
 panic = "abort"
 overflow-checks = true
 
-[profile.contract-release]
-inherits = "release"
+[profile.release]
 panic = "abort"
 overflow-checks = true

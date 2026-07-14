@@ -29,8 +29,8 @@ BUILD_DIR :=
 BINARIES := $(notdir $(shell pwd))
 
 ifeq (release,$(MODE))
-	CARGO_PROFILE := contract-release
-	MODE_ARGS := --profile $(CARGO_PROFILE)
+	CARGO_PROFILE := release
+	MODE_ARGS := --release
 endif
 
 default: build test
