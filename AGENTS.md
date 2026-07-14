@@ -15,7 +15,7 @@ The `docs/*.md` files contain specifications.
 
 ## Development workflow
 
-After making changes in `impl` folder, run the following in order:
+After making changes in `impl/contracts` folder, run the following in order:
 
 ### 1. Format & Clippy
 
@@ -29,7 +29,8 @@ cd impl && make fmt && make clippy
 cd impl && make test
 ```
 
-Do NOT report the task as done until both succeed.
+
+Do NOT report the task as done until they succeed.
 If you skip this, you failed the task even if the edit is correct.
 
 ## On-Chain Script (Contract) Implementation
