@@ -1,0 +1,38 @@
+# CKB Treasury — Agent Instructions
+
+## Toolchains
+
+- **Root**: `impl/rust-toolchain.toml` pins Rust 1.95.0
+- **on-chain scripts**: The projects in `impl/contracts` are compiled targeting RISC-V for CKB, using stable Rust 1.95.0. Do not mix this environment or its build artifacts with other Rust projects.
+
+## Documents
+The `docs/*.md` files contain specifications.
+
+- When using the CCC library, refer to [ccc](https://github.com/XuJiandong/ckb-vote-poc/blob/main/docs/knowledge/ccc.md).
+- When using the `ckb-cli` tool, refer to [ckb-cli](https://github.com/XuJiandong/ckb-vote-poc/blob/main/docs/knowledge/ckb-cli.md).
+- When working with the devnet, refer to [devnet](https://github.com/XuJiandong/ckb-vote-poc/blob/main/docs/knowledge/devnet.md).
+- When working with CKB RPC, refer to [ckb rpc](https://github.com/XuJiandong/ckb-vote-poc/blob/main/docs/knowledge/rpc.md).
+
+## Development workflow
+
+After making changes in `impl` folder, run the following in order:
+
+### 1. Format & Clippy
+
+```sh
+cd impl && make fmt && make clippy
+```
+
+### 2. Test
+
+```sh
+cd impl && make test
+```
+
+## On-Chain Script (Contract) Implementation
+in folder impl/contracts.
+
+These scripts should be implemented in Rust using [ckb-std](https://github.com/nervosnetwork/ckb-std).
+When using syscalls, prefer the `high_level` API. If a high-level equivalent is unavailable, fall back to the low-level syscalls.
+Review the relevant [RFCs](https://github.com/nervosnetwork/rfcs/tree/master/rfcs) before starting implementation.
+
