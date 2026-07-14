@@ -121,6 +121,8 @@ script verifies the following:
 The vote cell `code_hash` / `hash_type` is fixed once the vote type script is
 deployed. The remaining constrained fields are under discussion.
 
+Since anyone can initialize a proposal on-chain, the system is vulnerable to spam. One approach is to require locking more capacity in the proposal cell, such as 1000 CKBytes. Spam proposals cannot be unlocked, so the locked capacity is lost forever — this is the cost of spamming.
+
 ### Consuming
 
 When the proposal cell is consumed (the type script is on the input side), the
@@ -218,6 +220,11 @@ Properties this accounting must satisfy:
 - Because `transactions_root` recomputation and `parent_hash` chaining are **not**
   performed (the blocks are already validated by the node), the cost is limited to
   the traversal, hashing, and map bookkeeping described above.
+
+Another issue is that we will add a separate cycle limit for the proposal script. Consider a scenario
+where a block contains only one proposal script. The current cycle limit for a single block is quite high
+(3.5 billion), and such a limit might take down the node if a proposal script consumes all the cycles.
+We will set the separate cycle limit to something like 50M (TODO). This value is sufficient for normal use (e.g. 7-day voting).
 
 ### DoS considerations
 
