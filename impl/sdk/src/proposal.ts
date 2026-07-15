@@ -80,10 +80,11 @@ export async function createProposal(
   );
   const proposalDataHex = ccc.hexFrom(proposalData);
 
-  // Build the output with auto-calculated minimum capacity
+  // Anti-spam floor enforced by the embedded proposal script (1000 CKB).
+  const MIN_PROPOSAL_CAPACITY = 100_000_000_000n;
   const proposalOutput = ccc.CellOutput.from(
     {
-      capacity: 0n,
+      capacity: MIN_PROPOSAL_CAPACITY,
       lock: alwaysSuccessLock,
       type: placeholderTypeScript,
     },

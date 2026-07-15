@@ -1,10 +1,6 @@
 import { Command } from "commander";
 import { consumeProposal } from "../../proposal.js";
-import {
-  buildSigner,
-  die,
-  resolveNetworkConfig,
-} from "../shared.js";
+import { buildSigner, die, resolveNetworkConfig } from "../shared.js";
 
 export function registerConsumeProposal(program: Command): void {
   program

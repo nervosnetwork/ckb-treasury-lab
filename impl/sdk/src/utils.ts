@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
 import { ccc } from "@ckb-ccc/shell";
-import { DEVNET_CONFIG, type ScriptInfo, type NetworkConfig, type KnownScriptInfo } from "./config.js";
+import {
+  DEVNET_CONFIG,
+  type ScriptInfo,
+  type NetworkConfig,
+  type KnownScriptInfo,
+} from "./config.js";
 
 /**
  * Compute blake160: CKB blake2b-256 hash truncated to 20 bytes.
@@ -117,9 +122,7 @@ export function loadNetworkConfig(
 
     base = {
       ckbRpcUrl:
-        typeof json.ckbRpcUrl === "string"
-          ? json.ckbRpcUrl
-          : base.ckbRpcUrl,
+        typeof json.ckbRpcUrl === "string" ? json.ckbRpcUrl : base.ckbRpcUrl,
       alwaysSuccess: json.alwaysSuccess
         ? (json.alwaysSuccess as ScriptInfo)
         : base.alwaysSuccess,
@@ -129,10 +132,6 @@ export function loadNetworkConfig(
       voteTypeScript: json.voteTypeScript
         ? (json.voteTypeScript as ScriptInfo)
         : base.voteTypeScript,
-      sp1VerifyingKeyHash:
-        typeof json.sp1VerifyingKeyHash === "string"
-          ? json.sp1VerifyingKeyHash
-          : base.sp1VerifyingKeyHash,
       feeRate:
         typeof json.feeRate === "number"
           ? BigInt(json.feeRate)

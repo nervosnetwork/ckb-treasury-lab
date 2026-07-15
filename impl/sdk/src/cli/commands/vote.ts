@@ -1,10 +1,6 @@
 import { Command } from "commander";
 import { createVote, consumeVote } from "../../vote.js";
-import {
-  buildSigner,
-  die,
-  resolveNetworkConfig,
-} from "../shared.js";
+import { buildSigner, die, resolveNetworkConfig } from "../shared.js";
 
 export function registerVote(program: Command): void {
   // cast vote

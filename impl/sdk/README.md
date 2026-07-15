@@ -59,9 +59,9 @@ The `bin/ckb-vote.js` entry point auto-detects the runtime (Bun vs Node) and run
 
 All commands share:
 
-| Option | Description |
-|--------|-------------|
-| `--rpc-url <url>` | CKB RPC endpoint (default: `http://127.0.0.1:8114`) |
+| Option            | Description                                                  |
+| ----------------- | ------------------------------------------------------------ |
+| `--rpc-url <url>` | CKB RPC endpoint (default: `http://127.0.0.1:8114`)          |
 | `--config <path>` | JSON NetworkConfig file (defaults to built-in devnet config) |
 
 The `--config` file has the same shape as `NetworkConfig`:
@@ -139,14 +139,14 @@ ckb-vote create-proposal \
   [--config ./network.json]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--private-key-file` | Path to hex private key file |
-| `--duration` | Voting window in blocks (~10s/block) |
-| `--description` | Plain-text description |
-| `--receiver` | CKB address for funds if proposal passes; defaults to signer's address |
-| `--amount` | CKB to transfer on success; defaults to 500 |
-| `--minimal-requirement` | Minimum CKB vote weight to pass; defaults to 10000 |
+| Option                  | Description                                                            |
+| ----------------------- | ---------------------------------------------------------------------- |
+| `--private-key-file`    | Path to hex private key file                                           |
+| `--duration`            | Voting window in blocks (~10s/block)                                   |
+| `--description`         | Plain-text description                                                 |
+| `--receiver`            | CKB address for funds if proposal passes; defaults to signer's address |
+| `--amount`              | CKB to transfer on success; defaults to 500                            |
+| `--minimal-requirement` | Minimum CKB vote weight to pass; defaults to 10000                     |
 
 Output:
 
@@ -175,12 +175,12 @@ ckb-vote vote \
   [--config ./network.json]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--private-key-file` | Path to hex private key file |
-| `--proposal-tx-hash` | Tx hash of the proposal cell |
-| `--vote` | `yes` or `no` |
-| `--proposal-index` | Output index of the proposal cell (default: 0) |
+| Option               | Description                                    |
+| -------------------- | ---------------------------------------------- |
+| `--private-key-file` | Path to hex private key file                   |
+| `--proposal-tx-hash` | Tx hash of the proposal cell                   |
+| `--vote`             | `yes` or `no`                                  |
+| `--proposal-index`   | Output index of the proposal cell (default: 0) |
 
 Output:
 
@@ -218,11 +218,11 @@ ckb-vote consume-proposal \
   [--proposal-index 0]
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--proposal-tx-hash` | Tx hash of the proposal cell |
+| Option               | Description                                                       |
+| -------------------- | ----------------------------------------------------------------- |
+| `--proposal-tx-hash` | Tx hash of the proposal cell                                      |
 | `--start-block-hash` | Hash of the block containing the proposal cell (`header_deps[0]`) |
-| `--end-block-hash` | Hash of the end block (start + duration, `header_deps[1]`) |
+| `--end-block-hash`   | Hash of the end block (start + duration, `header_deps[1]`)        |
 
 ---
 

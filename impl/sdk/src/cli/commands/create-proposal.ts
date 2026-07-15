@@ -1,10 +1,6 @@
 import { Command } from "commander";
 import { createProposal } from "../../proposal.js";
-import {
-  buildSigner,
-  die,
-  resolveNetworkConfig,
-} from "../shared.js";
+import { buildSigner, die, resolveNetworkConfig } from "../shared.js";
 
 export function registerCreateProposal(program: Command): void {
   program

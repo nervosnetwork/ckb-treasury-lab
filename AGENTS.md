@@ -13,9 +13,19 @@ The `docs/*.md` files contain specifications.
 - When working with the devnet, refer to [devnet](https://github.com/XuJiandong/ckb-vote-poc/blob/main/docs/knowledge/devnet.md).
 - When working with CKB RPC, refer to [ckb rpc](https://github.com/XuJiandong/ckb-vote-poc/blob/main/docs/knowledge/rpc.md).
 
+## Implementations
+The spec in docs/proposal-type-script.md has an implementation in the ../ckb/script project, primarily under src/proposal. It is an embedded on-chain script implemented in the node.
+Build ckb with:
+```
+make prod
+```
+The binary `ckb` is located at target/prod/ckb. Copy it back to impl/devnet/ckb.
+
+The spec in docs/vote-type-script.md has an implementation in ./impl/contracts/vote-type-script. It is an on-chain script.
+
 ## Development workflow
 
-After making changes in `impl/contracts` folder, run the following in order:
+After making changes in `impl` folder, run the following in order:
 
 ### 1. Format & Clippy
 
@@ -29,9 +39,14 @@ cd impl && make fmt && make clippy
 cd impl && make test
 ```
 
-
 Do NOT report the task as done until they succeed.
 If you skip this, you failed the task even if the edit is correct.
+
+### SDK
+When working with content in the impl/sdk folder, refer to [this document](./impl/sdk/AGENTS.md).
+
+## E2E Tests
+The test is located at impl/e2e/run-devnet.sh. See more instructions in impl/e2e/AGENTS.md.
 
 ## On-Chain Script (Contract) Implementation
 in folder impl/contracts.

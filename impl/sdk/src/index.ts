@@ -1,11 +1,7 @@
 export type { NetworkConfig, ScriptInfo } from "./config.js";
 export { DEVNET_CONFIG } from "./config.js";
 
-export {
-  ProposalCodec,
-  VoteCodec,
-  ScriptMolCodec,
-} from "./codec.js";
+export { ProposalCodec, VoteCodec, ScriptMolCodec } from "./codec.js";
 export type {
   ProposalEncodable,
   ProposalDecoded,

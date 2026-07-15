@@ -26,8 +26,6 @@ export interface NetworkConfig {
   alwaysSuccess: ScriptInfo;
   proposalTypeScript: ScriptInfo;
   voteTypeScript: ScriptInfo;
-  /** 32-byte hex: hash of the SP1 guest program verifying key */
-  sp1VerifyingKeyHash: string;
   /** Fee rate in shannons per KB (default: 1500) */
   feeRate: bigint;
   /**
@@ -43,40 +41,36 @@ export const DEVNET_CONFIG: NetworkConfig = {
 
   alwaysSuccess: {
     codeHash:
-      "0xfb9026d2c0acff05496c4ccbeabe968440373fc71921680b22d25ca3f2ea634f",
+      "0xe06f2a38d20d1e4ce7c536dd410818a5e352b308fdf5c9bc31124887beb9b0d7",
     hashType: "type",
     outPoint: {
       txHash:
-        "0x2cccea9eb9b564a3a2e2d74145c71b9cc9e11fbeea494be41e3f5f4001a16286",
+        "0xdfafc64e52bc365505e10fbfe4bf1bca9bddec4decf10a753b13ba8698b939d0",
       index: 0,
     },
   },
 
   proposalTypeScript: {
     codeHash:
-      "0xa5bf702b6f096b2e800a619edbc920a165759ffb806c6955a15865d1cccf7958",
+      "0x00000000000000000000000000000000000000000000000050524f504f53414c",
     hashType: "type",
     outPoint: {
       txHash:
-        "0x5e30bf87ee22929b0b1747f2201a40731d4528a5af2a1f3f7c90909dc68ddec2",
+        "0xdfafc64e52bc365505e10fbfe4bf1bca9bddec4decf10a753b13ba8698b939d0",
       index: 0,
     },
   },
 
   voteTypeScript: {
     codeHash:
-      "0xf659306b518b6c3cc2cc7079bf8d349910821eb459534f42f17dfe392d38b2d4",
+      "0x590102bc8a88ad923b8b8d643f12507d84eec15934a7eeb0a9a01beade3b573b",
     hashType: "type",
     outPoint: {
       txHash:
-        "0x3d4d939bef8d45f19d38d7de163ddbf1c6ae50cbbe2d7aeace9e397fccabe691",
+        "0xa75456e7008777e32835df57fce22c1a6d467bd5d0c980ab9b4fc04af5a5dcc0",
       index: 0,
     },
   },
-
-  // From sp1/ckb-vote-verification/verifying-key.txt
-  sp1VerifyingKeyHash:
-    "0x00469e90740aaaa13a626262b02ffe3b1434c19af72b0f8eb0c3ceec2b3228fe",
 
   feeRate: 1500n,
 

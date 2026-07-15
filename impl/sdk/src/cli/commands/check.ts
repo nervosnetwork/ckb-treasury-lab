@@ -165,7 +165,13 @@ async function checkKnownScriptCellDeps(
   for (const [name, info] of Object.entries(config.knownScripts)) {
     for (const { cellDep } of info.cellDeps) {
       const { txHash, index: idx } = cellDep.outPoint;
-      if (!(await checkScriptCellAlive(name, { txHash, index: Number(idx) }, config.ckbRpcUrl))) {
+      if (
+        !(await checkScriptCellAlive(
+          name,
+          { txHash, index: Number(idx) },
+          config.ckbRpcUrl,
+        ))
+      ) {
         allOk = false;
       }
     }
