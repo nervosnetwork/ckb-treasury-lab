@@ -17,9 +17,10 @@ The `docs/*.md` files contain specifications.
 The spec in docs/proposal-type-script.md has an implementation in the ../ckb/script project, primarily under src/proposal. It is an embedded on-chain script implemented in the node.
 Build ckb with:
 ```
-make prod
+RUSTFLAGS="-C debuginfo=0" cargo build --locked --bin ckb --features "with_sentry,with_dns_seeding,portable"
 ```
-The binary `ckb` is located at target/prod/ckb. Copy it back to impl/devnet/ckb.
+
+The binary `ckb` is located at target/debug/ckb. Copy it back to impl/devnet/ckb.
 
 The spec in docs/vote-type-script.md has an implementation in ./impl/contracts/vote-type-script. It is an on-chain script.
 
