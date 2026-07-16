@@ -15,6 +15,11 @@ Specification as following:
 - [vote type script](docs/vote-type-script.md)
 - [treasury lock script](docs/treasury-lock-spec.md)
 
+Implementation as following:
+- [proposal type script](https://github.com/XuJiandong/ckb/tree/proposal-type-script)
+- [vote type script](impl/contracts/vote-type-script/)
+- treasury lock script: TODO
+
 ## How the scripts relate
 
 These three scripts work together to form the voting system that allocates the treasury.

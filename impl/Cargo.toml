@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = [
+  "contracts/vote-type-script"
+]
+
+[workspace.package]
+version = "0.1.0"
+license = "MIT"
+edition = "2024"
+description = "CKB vote system"
+homepage = "https://github.com/nervosnetwork"
+repository = "https://github.com/nervosnetwork"
+rust-version = "1.92.0"
+
+[profile.dev]
+panic = "abort"
+overflow-checks = true
+
+[profile.release]
+panic = "abort"
+overflow-checks = true
