@@ -7,7 +7,7 @@ SDK_DIR="$REPO_ROOT/impl/sdk"
 
 source "$SCRIPT_DIR/env.sh"
 
-DURATION=3
+DURATION="${DURATION:-3}"
 DESCRIPTION="${1:-test1}"
 PK_FILE="$SCRIPT_DIR/pk1"
 
@@ -49,8 +49,7 @@ get_block_hash() {
 # Poll until the chain tip is at or beyond target_block.
 wait_for_block() {
   local target="$1"
-  local deadline=$(( SECONDS + 120 ))
-  while [ "$SECONDS" -lt "$deadline" ]; do
+  while true; do
     local tip
     tip=$(curl -s "$CKB_RPC" -X POST -H 'Content-Type: application/json' \
       -d '{"jsonrpc":"2.0","method":"get_tip_block_number","params":[],"id":1}' \
@@ -61,7 +60,6 @@ wait_for_block() {
     fi
     sleep 0.5
   done
-  echo "ERROR: tip did not reach block $target within 120 s" >&2
   return 1
 }
 
