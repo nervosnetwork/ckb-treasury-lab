@@ -33,6 +33,8 @@ export function registerCreateProposal(program: Command): void {
       parseFloat,
       10000,
     )
+    .option("--start-block-hash <hash>", "Start block hash")
+    .option("--end-block-hash <hash>", "End block hash")
     .option("--rpc-url <url>", "CKB RPC endpoint")
     .option("--config <path>", "JSON NetworkConfig file (defaults to devnet)")
     .action(async (opts) => {
@@ -50,6 +52,8 @@ export function registerCreateProposal(program: Command): void {
           receiver: opts.receiver,
           amount: amountShannon,
           minimalRequirement: opts.minimalRequirement,
+          startBlockHash: opts.startBlockHash,
+          endBlockHash: opts.endBlockHash,
           config,
         });
 

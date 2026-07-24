@@ -8,7 +8,7 @@
 bytes_per_sync=1048576
 max_background_jobs=6
 max_total_wal_size=134217728
-keep_log_file_num=32
+keep_log_file_num=1
 
 [CFOptions "default"]
 level_compaction_dynamic_level_bytes=true
