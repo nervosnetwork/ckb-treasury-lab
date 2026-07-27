@@ -25,59 +25,80 @@ They measure the `verify` function and block loading. The former gives an overvi
 5. Press `Ctrl+C` on `benchmark.sh` when testing is done.
 
 ## Results
-On a MacBook Air M4, the results are as follows(DURATION=50):
-```
+The following scenarios were used:
+1. 1000 blocks
+2. Each block contains 1051 transactions
+3. Machine: Intel(R) Xeon(R) Platinum 8275CL CPU @ 3.00GHz, 4 cores.
 
+Results are as follows:
+```text
+[verify ] TID 222364  call# 1     6114         ns
+[verify ] TID 222366  call# 1     2087422275   ns
+^C
 ╔════════════════════════════════════════════════════╗
 ║                verify()  Summary                   ║
 ╚════════════════════════════════════════════════════╝
-  Total count:  2
-  Total time:   385417 ns
-  Average:      192708 ns
-  Min:          2917 ns
-  Max:          382500 ns
+@verify_count: 2
+@verify_total_ns: 6382395685
+@verify_avg_ns: 3191197842
+
+@verify_min_ns: 6114
+@verify_max_ns: 6382389571
 
   Latency distribution (ns):
-
-
-           value  ------------- Distribution ------------- count    
-            1024 |                                         0        
-            2048 |@@@@@@@@@@@@@@@@@@@@                     1        
-            4096 |                                         0        
-            8192 |                                         0        
-           16384 |                                         0        
-           32768 |                                         0        
-           65536 |                                         0        
-          131072 |                                         0        
-          262144 |@@@@@@@@@@@@@@@@@@@@                     1        
-          524288 |                                         0        
+@verify_quant_ns:
+[4K, 8K)               1 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[8K, 16K)              0 |                                                    |
+[16K, 32K)             0 |                                                    |
+[32K, 64K)             0 |                                                    |
+[64K, 128K)            0 |                                                    |
+[128K, 256K)           0 |                                                    |
+[256K, 512K)           0 |                                                    |
+[512K, 1M)             0 |                                                    |
+[1M, 2M)               0 |                                                    |
+[2M, 4M)               0 |                                                    |
+[4M, 8M)               0 |                                                    |
+[8M, 16M)              0 |                                                    |
+[16M, 32M)             0 |                                                    |
+[32M, 64M)             0 |                                                    |
+[64M, 128M)            0 |                                                    |
+[128M, 256M)           0 |                                                    |
+[256M, 512M)           0 |                                                    |
+[512M, 1G)             0 |                                                    |
+[1G, 2G)               0 |                                                    |
+[2G, 4G)               0 |                                                    |
+[4G, 8G)               1 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
 
 
 ╔════════════════════════════════════════════════════╗
 ║          BlockProvider calls  Summary              ║
 ╚════════════════════════════════════════════════════╝
-  Total count:  53
-  Total time:   302998 ns
-  Average:      5716 ns
-  Min:          375 ns
-  Max:          35792 ns
+@bp_count: 1002
+@bp_total_ns: 5837837932
+@bp_avg_ns: 5826185
+
+@bp_min_ns: 2491
+@bp_max_ns: 17768858
 
   Latency distribution (ns):
-
-
-           value  ------------- Distribution ------------- count    
-             128 |                                         0        
-             256 |@@                                       2        
-             512 |                                         0        
-            1024 |                                         0        
-            2048 |                                         0        
-            4096 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@    49       
-            8192 |@                                        1        
-           16384 |                                         0        
-           32768 |@                                        1        
-           65536 |                                         0  
-
+@bp_quant_ns:
+[2K, 4K)               1 |                                                    |
+[4K, 8K)               1 |                                                    |
+[8K, 16K)              0 |                                                    |
+[16K, 32K)             0 |                                                    |
+[32K, 64K)             0 |                                                    |
+[64K, 128K)            0 |                                                    |
+[128K, 256K)           0 |                                                    |
+[256K, 512K)           0 |                                                    |
+[512K, 1M)             0 |                                                    |
+[1M, 2M)               0 |                                                    |
+[2M, 4M)             477 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@|
+[4M, 8M)             149 |@@@@@@@@@@@@@@@@                                    |
+[8M, 16M)            373 |@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@            |
+[16M, 32M)             1 |                                                    |
 ```
 
-The result is 382,500 ns for 50 blocks. Normalized to 1 day (assuming 10 seconds per block), it is 66 ms. For 7 days: 463 ms.
-The bottleneck is block loading, which consumed 79% of the time.
+It costs 2.1 seconds in total. Normalized to 1 day, that is 22.7 seconds (158.8 seconds for 7 days).
+Although this scenario is at maximum throughput, the processing time is significant. We need a plan to reduce the total workload.
+
+
