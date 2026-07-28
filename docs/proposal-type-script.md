@@ -172,13 +172,13 @@ Any proposal cell can be updated during the vote process. The script verifies th
    the corresponding `WitnessArgs.input_type`, and its blake160 must match the input's
    `tally_state_hash`. If the input's `tally_state_hash` is all zero, start from an empty
    `TallyState` (no prior checkpoint).
-4. The script then performs `count_vote` (described later) over all blocks from the
+4. Based on the current `TallyState`, the script then performs `count_vote` (described later) over all blocks from the
    input proposal cell's block (exclusive) to the output proposal cell's block (inclusive).
    It computes blake160 of the final `TallyState`; the result must match the
    `tally_state_hash` in the output proposal cell data.
 5. The delta of `duration` (the old value minus the new value) must exactly match the
    block count above. The output `duration` cannot be zero.
-   The delta should be large enough to prevent DoS attacks (e.g. > 450, ~1 hour).
+   The delta should be large enough to prevent DoS attacks (e.g. > 450, ~1 hour, TODO).
 
 The `count_vote` algorithm described as follow:
    - A cell is counted as a vote when its type script `code_hash` /
@@ -212,7 +212,7 @@ The script verifies the following:
 2. Read the `TallyState` from `WitnessArgs.input_type` if `tally_state_hash` is not
    zero, and verify that its blake160 hash matches. If `tally_state_hash` is all
    zero, start from an empty `TallyState`.
-3. Run the `count_vote` algorithm over every transaction in the voting blocks, from
+3. Based on the current `TallyState`, run the `count_vote` algorithm over every transaction in the voting blocks, from
    the start block (exclusive) to the end block (inclusive) denoted by
    `header_deps[0].number`. The start block was already counted in a previous
    updating phase, or is the creating block and is excluded from vote counting.
