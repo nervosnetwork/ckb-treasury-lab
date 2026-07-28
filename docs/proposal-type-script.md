@@ -63,7 +63,7 @@ passes, the cell can be consumed by anyone.
 When a proposal cell is created, the proposal type script appears in the output
 cells. When consumed, it appears in the input cells. During an optional updating
 phase, it appears on both sides (exactly one input and one output) so the
-checkpointed `TallyState` can advance without settling the proposal.
+`TallyCheckpoint` can advance without settling the proposal.
 
 ## Witness
 
@@ -88,18 +88,18 @@ struct DaoVoterEntry {
 
 vector DaoVoterEntryVec <DaoVoterEntry>;
 
-table TallyState {
+table TallyCheckpoint {
   all_lock_hash: Byte20Vec,
   vote_map: VoteMapEntryVec,
   dao_outpoint_to_voter: DaoVoterEntryVec,
 }
 ```
 
-During updating and consuming, the TallyState is placed in `input_type` of the type script witness in WitnessArgs.
+During updating and consuming, the TallyCheckpoint is placed in `input_type` of the type script witness in WitnessArgs.
 
-The `Byte20`, `VoteMapEntry`, and `DaoVoterEntry` entries within each vector must be sorted. The final TallyState must be deterministic.
+The `Byte20`, `VoteMapEntry`, and `DaoVoterEntry` entries within each vector must be sorted. The final TallyCheckpoint must be deterministic.
 
-Attackers can create many small DAO deposits and flood votes to make the `TallyState` very large.
+Attackers can create many small DAO deposits and flood votes to make the `TallyCheckpoint` very large.
 When it exceeds the block limit, the cell cannot be used. To prevent this attack, we suggest restricting voting to DAO deposits with at least a minimum amount of CKBytes, e.g., 1000 CKBytes(TODO).
 
 ## Cell Data
@@ -108,7 +108,7 @@ The cell data is a molecule structure:
 
 ```
 table Proposal {
-    tally_state_hash: Byte20,
+    tally_checkpoint_hash: Byte20,
     duration: Uint32,
     vote_cell_code_hash: Byte32,
     vote_cell_hash_type: byte,
@@ -118,9 +118,9 @@ table Proposal {
     minimal_requirement: Uint64,
 }
 ```
-1. `tally_state_hash`: blake160 of TallyState. This hash is all zero when created
+1. `tally_checkpoint_hash`: blake160 of TallyCheckpoint. This hash is all zero when created
    (no prior checkpoint). After an updating phase it is the blake160 of the
-   checkpointed `TallyState` produced by that phase.
+   `TallyCheckpoint` produced by that phase.
 2. `duration` (N) in blocks: remaining blocks in which votes are still to be
    counted. Votes outside the voting range are not counted. During an updating
    phase the duration is reduced by the number of blocks just scanned.
@@ -155,7 +155,7 @@ script verifies the following:
    - `duration` in cell data
    - `amount` in cell data
    - `minimal_requirement` in cell data
-3. `tally_state_hash` are all zero.
+3. `tally_checkpoint_hash` are all zero.
 4. There is exactly one such type script in the transaction.
 
 The vote cell `code_hash` / `hash_type` is fixed once the vote type script is
@@ -166,16 +166,16 @@ Since anyone can initialize a proposal on-chain, the system is vulnerable to spa
 ### Updating
 Any proposal cell can be updated during the vote process. The script verifies the following:
 1. There must be exactly one input proposal cell and one output proposal cell, with the same `args`.
-2. Only `tally_state_hash` and `duration` may change in the cell data; all other
+2. Only `tally_checkpoint_hash` and `duration` may change in the cell data; all other
    fields must be identical.
-3. If the input's `tally_state_hash` is not all zero, a `TallyState` must be included in
+3. If the input's `tally_checkpoint_hash` is not all zero, a `TallyCheckpoint` must be included in
    the corresponding `WitnessArgs.input_type`, and its blake160 must match the input's
-   `tally_state_hash`. If the input's `tally_state_hash` is all zero, start from an empty
-   `TallyState` (no prior checkpoint).
-4. Based on the current `TallyState`, the script then performs `count_vote` (described later) over all blocks from the
+   `tally_checkpoint_hash`. If the input's `tally_checkpoint_hash` is all zero, start from an empty
+   `TallyCheckpoint` (no prior checkpoint).
+4. Based on the current `TallyCheckpoint`, the script then performs `count_vote` (described later) over all blocks from the
    input proposal cell's block (exclusive) to the output proposal cell's block (inclusive).
-   It computes blake160 of the final `TallyState`; the result must match the
-   `tally_state_hash` in the output proposal cell data.
+   It computes blake160 of the final `TallyCheckpoint`; the result must match the
+   `tally_checkpoint_hash` in the output proposal cell data.
 5. The delta of `duration` (the old value minus the new value) must exactly match the
    block count above. The output `duration` cannot be zero.
    The delta should be large enough to prevent DoS attacks (e.g. > 450, ~1 hour, TODO).
@@ -209,10 +209,10 @@ The script verifies the following:
    `header_deps[0]` must be referenced, the end block is guaranteed to already
    exist on-chain; this ensures a proposal can only be settled after the voting
    window has closed.
-2. Read the `TallyState` from `WitnessArgs.input_type` if `tally_state_hash` is not
-   zero, and verify that its blake160 hash matches. If `tally_state_hash` is all
-   zero, start from an empty `TallyState`.
-3. Based on the current `TallyState`, run the `count_vote` algorithm over every transaction in the voting blocks, from
+2. Read the `TallyCheckpoint` from `WitnessArgs.input_type` if `tally_checkpoint_hash` is not
+   zero, and verify that its blake160 hash matches. If `tally_checkpoint_hash` is all
+   zero, start from an empty `TallyCheckpoint`.
+3. Based on the current `TallyCheckpoint`, run the `count_vote` algorithm over every transaction in the voting blocks, from
    the start block (exclusive) to the end block (inclusive) denoted by
    `header_deps[0].number`. The start block was already counted in a previous
    updating phase, or is the creating block and is excluded from vote counting.
@@ -303,7 +303,7 @@ We will set the separate cycle limit to something like 50M (TODO). This value is
   `header_deps[0]`, and the start block is the canonical block that produced the
   consumed proposal cell; the remaining range is the cell's `duration` blocks
   forward on the canonical chain, so the result is identical across nodes.
-  Updating phases checkpoint intermediate `TallyState` into `tally_state_hash`.
+  Updating phases checkpoint intermediate `TallyCheckpoint` into `tally_checkpoint_hash`.
   A chain reorg that changes any block in the scanned range (or a checkpoint
   cell's position) changes the result; this is inherent to reading chain state
   and is the same class of concern that `header_deps` addresses for ordinary scripts.
@@ -333,7 +333,7 @@ Outputs:
     Proposal_Cell
         Data:
             Proposal (molecule):
-                tally_state_hash: 0x0000...00           # 20 zero bytes; no checkpoint yet
+                tally_checkpoint_hash: 0x0000...00           # 20 zero bytes; no checkpoint yet
                 duration: 8640                          # ~1 day (8640 blocks x ~10s)
                 vote_cell_code_hash: <32-byte hash of vote type script>
                 vote_cell_hash_type: 0x01               # type
@@ -372,16 +372,16 @@ Witnesses:
 ### Example 2: Updating a Proposal Cell (Optional Checkpoint)
 
 Advances the checkpoint after scanning 1000 voting blocks. Input
-`tally_state_hash` is all zero, so no prior `TallyState` is required in the
+`tally_checkpoint_hash` is all zero, so no prior `TallyCheckpoint` is required in the
 witness. Output `duration` is reduced by the scanned block count and must stay
-non-zero. Output `tally_state_hash` is blake160 of the post-scan `TallyState`.
+non-zero. Output `tally_checkpoint_hash` is blake160 of the post-scan `TallyCheckpoint`.
 
 ```yaml
 Inputs:
     Proposal_Cell                                       # produced at block S (creating or prior update)
         Data:
             Proposal (molecule):
-                tally_state_hash: 0x0000...00           # or blake160 of prior TallyState
+                tally_checkpoint_hash: 0x0000...00           # or blake160 of prior TallyCheckpoint
                 duration: 8640
                 vote_cell_code_hash: <32-byte hash of vote type script>
                 vote_cell_hash_type: 0x01
@@ -406,7 +406,7 @@ Outputs:
     Proposal_Cell                                       # this tx is included in block S+1000
         Data:
             Proposal (molecule):
-                tally_state_hash: <blake160(TallyState)> # after count_vote over (S, S+1000]
+                tally_checkpoint_hash: <blake160(TallyCheckpoint)> # after count_vote over (S, S+1000]
                 duration: 7640                          # 8640 - 1000; must be > 0
                 vote_cell_code_hash: <32-byte hash of vote type script>
                 vote_cell_hash_type: 0x01
@@ -430,7 +430,7 @@ Outputs:
 Witnesses:
     WitnessArgs structure (proposal type script group):
         Lock: <none>                                    # always-success lock
-        input_type: <TallyState or none>                # required only if input.tally_state_hash != 0
+        input_type: <TallyCheckpoint or none>                # required only if input.tally_checkpoint_hash != 0
         output_type: <none>
 ```
 
@@ -440,8 +440,8 @@ Witnesses:
 
 The transaction supplies `header_deps[0]` as the end block. The start block is
 the block that produced the consumed `Proposal_Cell` (creating block, or the
-latest updating block). If `tally_state_hash` is non-zero, `WitnessArgs.input_type`
-carries the matching `TallyState` checkpoint. The node scans the remaining
+latest updating block). If `tally_checkpoint_hash` is non-zero, `WitnessArgs.input_type`
+carries the matching `TallyCheckpoint`. The node scans the remaining
 `duration` voting blocks, tallies votes, and unlocks the cell because the
 proposal passed.
 
@@ -450,7 +450,7 @@ Inputs:
     Proposal_Cell                                       # start block = block that produced this cell
         Data:
             Proposal (molecule):
-                tally_state_hash: <blake160(TallyState)> # 0x00..00 if never updated
+                tally_checkpoint_hash: <blake160(TallyCheckpoint)> # 0x00..00 if never updated
                 duration: 7640                          # remaining blocks after updates (or full N)
                 vote_cell_code_hash: <32-byte hash of vote type script>
                 vote_cell_hash_type: 0x01
@@ -497,7 +497,7 @@ Header Deps:
 Witnesses:
     WitnessArgs structure (proposal type script group):
         Lock: <none>                                    # always-success lock
-        input_type: <TallyState or none>                # required if tally_state_hash != 0
+        input_type: <TallyCheckpoint or none>                # required if tally_checkpoint_hash != 0
         output_type: <none>
 
     WitnessArgs structure (for the Treasury_Cell / funding inputs, as needed):
