@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# this script is working with "skip-checking" feature enabled for CKB node
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 SDK_DIR="$REPO_ROOT/impl/sdk"
 
 source "$SCRIPT_DIR/env.sh"
 
-DURATION="${DURATION:-3}"
+START_BLOCK_NUMBER="${START:-1000}"
+DURATION="${DURATION:-100}"
 DESCRIPTION="${1:-test1}"
 PK_FILE="$SCRIPT_DIR/pk1"
 
@@ -63,10 +65,27 @@ wait_for_block() {
   return 1
 }
 
+echo "==> Waiting for chain to reach block $START_BLOCK_NUMBER..."
+wait_for_block "$START_BLOCK_NUMBER"
+echo "  chain tip at or beyond block $START_BLOCK_NUMBER"
+
+START_BLOCK_HASH=$(get_block_hash "$START_BLOCK_NUMBER")
+echo "  start block hash:  $START_BLOCK_HASH"
+END_BLOCK=$(( START_BLOCK_NUMBER + DURATION ))
+
+echo ""
+echo "==> Waiting for voting window to close (need tip ≥ block $END_BLOCK)..."
+wait_for_block "$END_BLOCK"
+echo "  tip reached block $END_BLOCK"
+END_BLOCK_HASH=$(get_block_hash "$END_BLOCK")
+echo "  end block hash:    $END_BLOCK_HASH"
+
 echo "==> Creating proposal (duration=$DURATION, description=\"$DESCRIPTION\")..."
 create_output=$(cd "$SDK_DIR" && pnpm dev create-proposal \
   --private-key-file "$PK_FILE" \
   --duration "$DURATION" \
+  --start-block-hash "$START_BLOCK_HASH" \
+  --end-block-hash "$END_BLOCK_HASH" \
   --description "$DESCRIPTION")
 echo "$create_output"
 
@@ -84,33 +103,6 @@ echo ""
 echo "==> Waiting for proposal TX to be committed..."
 PROPOSAL_BLOCK=$(poll_tx_committed "$PROPOSAL_TX_HASH")
 echo "  proposal committed in block $PROPOSAL_BLOCK"
-START_BLOCK_HASH=$(get_block_hash "$PROPOSAL_BLOCK")
-echo "  start block hash:  $START_BLOCK_HASH"
-END_BLOCK=$(( PROPOSAL_BLOCK + DURATION ))
-
-echo ""
-echo "==> Voting yes on proposal $PROPOSAL_TX_HASH..."
-(cd "$SDK_DIR" && pnpm dev vote \
-  --private-key-file "$PK_FILE" \
-  --proposal-tx-hash "$PROPOSAL_TX_HASH" \
-  --vote yes)
-
-echo ""
-echo "==> Waiting for voting window to close (need tip ≥ block $END_BLOCK)..."
-wait_for_block "$END_BLOCK"
-echo "  tip reached block $END_BLOCK"
-END_BLOCK_HASH=$(get_block_hash "$END_BLOCK")
-echo "  end block hash:    $END_BLOCK_HASH"
-
-INFO_FILE="$SCRIPT_DIR/info.txt"
-cat > "$INFO_FILE" <<EOF
-proposal_tx_hash=$PROPOSAL_TX_HASH
-proposal_tx_index=$PROPOSAL_TX_INDEX
-start_block_hash=$START_BLOCK_HASH
-end_block_hash=$END_BLOCK_HASH
-EOF
-echo ""
-echo "  info saved to $INFO_FILE"
 
 echo ""
 echo "==> Consuming proposal $PROPOSAL_TX_HASH..."

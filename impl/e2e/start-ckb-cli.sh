@@ -3,4 +3,4 @@ set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
-exec ckb-cli "$@"
+exec ckb-cli --url "$CKB_RPC" "$@"

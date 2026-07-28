@@ -42,6 +42,8 @@ export type VoteDecoded = ccc.mol.DecodedType<typeof VoteCodec>;
  *   receiver: Script,
  *   amount: Uint64,
  *   minimal_requirement: Uint64,
+ *   start_block_hash: Byte32,
+ *   end_block_hash: Byte32,
  * }
  */
 export const ProposalCodec = mol.table({
@@ -52,6 +54,8 @@ export const ProposalCodec = mol.table({
   receiver: ScriptMolCodec,
   amount: mol.Uint64,
   minimalRequirement: mol.Uint64,
+  startBlockHash: mol.Byte32,
+  endBlockHash: mol.Byte32,
 });
 
 export type ProposalEncodable = ccc.mol.EncodableType<typeof ProposalCodec>;

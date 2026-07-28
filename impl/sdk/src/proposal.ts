@@ -23,6 +23,8 @@ export interface CreateProposalParams {
   amount?: bigint;
   /** minimal_requirement in CKB; defaults to 0 */
   minimalRequirement?: number;
+  startBlockHash?: string;
+  endBlockHash?: string;
   config?: Partial<NetworkConfig>;
 }
 
@@ -151,6 +153,8 @@ function buildProposalData(
     receiver: receiverLock,
     amount,
     minimalRequirement,
+    startBlockHash: params.startBlockHash ?? "0x" + "00".repeat(32),
+    endBlockHash: params.endBlockHash ?? "0x" + "00".repeat(32),
   });
 }
 
