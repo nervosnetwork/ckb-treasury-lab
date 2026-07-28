@@ -99,6 +99,8 @@ During updating and consuming, the TallyState is placed in `input_type` of the t
 
 The `Byte20`, `VoteMapEntry`, and `DaoVoterEntry` entries within each vector must be sorted. The final TallyState must be deterministic.
 
+Attackers can create many small DAO deposits and flood votes to make the `TallyState` very large.
+When it exceeds the block limit, the cell cannot be used. To prevent this attack, we suggest restricting voting to DAO deposits with at least a minimum amount of CKBytes, e.g., 1000 CKBytes(TODO).
 
 ## Cell Data
 
