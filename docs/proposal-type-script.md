@@ -21,7 +21,7 @@ outputs, `cell_deps`, `header_deps`, `witnesses`). It reads the required blocks
 
 This has three important consequences:
 
-1. **No block data on-chain.** The `duration + 1` blocks never need to be carried
+1. **No block data on-chain.** The remaining voting blocks never need to be carried
    in the witness (which would be infeasible for realistic durations). The node
    already has them.
 2. **No integrity checks needed.** Blocks fetched from the node's store are
@@ -61,12 +61,46 @@ lock script. All access control is delegated to this type script. Once a proposa
 passes, the cell can be consumed by anyone.
 
 When a proposal cell is created, the proposal type script appears in the output
-cells. When consumed, it appears in the input cells. It is not allowed to appear
-on both sides at once, to prevent updating an existing proposal cell.
+cells. When consumed, it appears in the input cells. During an optional updating
+phase, it appears on both sides (exactly one input and one output) so the
+`TallyCheckpoint` can advance without settling the proposal.
 
 ## Witness
 
-This script reads **no witness**, on either creation or consumption.
+It uses the following structure:
+
+```
+array Byte20 [byte; 20];
+vector Byte20Vec <Byte20>;
+
+struct VoteMapEntry {
+  lock_hash_index: Uint16,
+  direction: byte,
+  shannon: Uint64,
+}
+
+vector VoteMapEntryVec <VoteMapEntry>;
+
+struct DaoVoterEntry {
+  out_point: OutPoint,
+  lock_hash_index: Uint16,
+}
+
+vector DaoVoterEntryVec <DaoVoterEntry>;
+
+table TallyCheckpoint {
+  all_lock_hash: Byte20Vec,
+  vote_map: VoteMapEntryVec,
+  dao_outpoint_to_voter: DaoVoterEntryVec,
+}
+```
+
+During updating and consuming, the TallyCheckpoint is placed in `input_type` of the type script witness in WitnessArgs.
+
+The `Byte20`, `VoteMapEntry`, and `DaoVoterEntry` entries within each vector must be sorted. The final TallyCheckpoint must be deterministic.
+
+Attackers can create many small DAO deposits and flood votes to make the `TallyCheckpoint` very large.
+When it exceeds the block limit, the cell cannot be used. To prevent this attack, we suggest restricting voting to DAO deposits with at least a minimum amount of CKBytes, e.g., 1000 CKBytes(TODO).
 
 ## Cell Data
 
@@ -74,6 +108,7 @@ The cell data is a molecule structure:
 
 ```
 table Proposal {
+    tally_checkpoint_hash: Byte20,
     duration: Uint32,
     vote_cell_code_hash: Byte32,
     vote_cell_hash_type: byte,
@@ -83,19 +118,19 @@ table Proposal {
     minimal_requirement: Uint64,
 }
 ```
-
-1. `duration` (N) in blocks: the start block (the block where the proposal cell is
-   created) is reserved for the proposal itself; votes are valid only if cast within
-   the N consecutive blocks that follow. The full scanned range is therefore
-   `duration + 1` blocks: the start block plus the N voting blocks. Votes outside
-   the voting range are not counted.
-2. `vote_cell_code_hash` / `vote_cell_hash_type`: specifies the script a vote cell
+1. `tally_checkpoint_hash`: blake160 of TallyCheckpoint. This hash is all zero when created
+   (no prior checkpoint). After an updating phase it is the blake160 of the
+   `TallyCheckpoint` produced by that phase.
+2. `duration` (N) in blocks: remaining blocks in which votes are still to be
+   counted. Votes outside the voting range are not counted. During an updating
+   phase the duration is reduced by the number of blocks just scanned.
+3. `vote_cell_code_hash` / `vote_cell_hash_type`: specifies the script a vote cell
    must use. Cells using a different script are not counted as valid votes.
-3. `description`: a plain-text UTF-8 description of the proposal.
-4. `receiver`: the address that will receive the CKBytes when the proposal
+4. `description`: a plain-text UTF-8 description of the proposal.
+5. `receiver`: the address that will receive the CKBytes when the proposal
    passes.
-5. `amount`: the amount of CKBytes to be received.
-6. `minimal_requirement`: minimum required CKBytes involved in voting.
+6. `amount`: the amount of CKBytes to be received.
+7. `minimal_requirement`: minimum required CKBytes involved in voting.
 
 Since proposal cells can be created by anyone, the fields `duration`,
 `vote_cell_code_hash` / `vote_cell_hash_type`, `amount`, and
@@ -103,8 +138,12 @@ Since proposal cells can be created by anyone, the fields `duration`,
 parameters will be published once the voting system is finalized.
 
 ## Unlocking Process
+There are three phases: creating, updating, and consuming. The updating phase is optional.
+It exists for performance reasons. When vote throughput is very high, a single consuming phase
+would take too long, making it impossible to finish within one block.
+Therefore, the whole process is split into several updating phases.
 
-### Creation
+### Creating
 
 When a proposal cell is created (the type script is on the output side), the
 script verifies the following:
@@ -116,52 +155,70 @@ script verifies the following:
    - `duration` in cell data
    - `amount` in cell data
    - `minimal_requirement` in cell data
-3. There is exactly one such type script in the transaction.
+3. `tally_checkpoint_hash` are all zero.
+4. There is exactly one such type script in the transaction.
 
 The vote cell `code_hash` / `hash_type` is fixed once the vote type script is
 deployed. The remaining constrained fields are under discussion.
 
 Since anyone can initialize a proposal on-chain, the system is vulnerable to spam. One approach is to require locking more capacity in the proposal cell, such as 1000 CKBytes. Spam proposals cannot be unlocked, so the locked capacity is lost forever — this is the cost of spamming.
 
-### Consuming
+### Updating
+Any proposal cell can be updated during the vote process. The script verifies the following:
+1. There must be exactly one input proposal cell and one output proposal cell, with the same `args`.
+2. Only `tally_checkpoint_hash` and `duration` may change in the cell data; all other
+   fields must be identical.
+3. If the input's `tally_checkpoint_hash` is not all zero, a `TallyCheckpoint` must be included in
+   the corresponding `WitnessArgs.input_type`, and its blake160 must match the input's
+   `tally_checkpoint_hash`. If the input's `tally_checkpoint_hash` is all zero, start from an empty
+   `TallyCheckpoint` (no prior checkpoint).
+4. Based on the current `TallyCheckpoint`, the script then performs `count_vote` (described later) over all blocks from the
+   input proposal cell's block (exclusive) to the output proposal cell's block (inclusive).
+   It computes blake160 of the final `TallyCheckpoint`; the result must match the
+   `tally_checkpoint_hash` in the output proposal cell data.
+5. The delta of `duration` (the old value minus the new value) must exactly match the
+   block count above. The output `duration` cannot be zero.
+   The delta should be large enough to prevent DoS attacks (e.g. > 450, ~1 hour, TODO).
 
-When the proposal cell is consumed (the type script is on the input side), the
-node determines the outcome by scanning the chain natively. No witness is
-required, but the transaction must supply two `header_deps`.
-
-1. **Reference the start and end blocks via `header_deps`.** The transaction
-   provides `header_deps[0]` and `header_deps[1]`, corresponding to the start
-   block hash and end block hash respectively. These hashes are referenced via
-   `header_deps`; if either is invalid, the reference fails and the transaction
-   cannot be constructed. The start block is the block that created the proposal
-   cell being consumed — i.e. where voting began — and the node verifies that
-   `header_deps[0]` matches the input's creating block (resolved from the input's
-   `previous_output`).
-2. **Determine the block range.** The node verifies that `header_deps[1].number`
-   equals `header_deps[0].number + duration`, then reads the `duration + 1`
-   consecutive blocks from `header_deps[0]` through `header_deps[1]` inclusive
-   from its own storage. Because `header_deps[1]` must be referenced, the end
-   block is guaranteed to already exist on-chain; this enforces that a proposal
-   can only be settled **after the voting window has closed**.
-3. **Tally votes.** Run the `count_vote` algorithm (identical to the shared logic
-   in [crates/verification/src/lib.rs](https://github.com/XuJiandong/ckb-vote-poc/blob/main/crates/verification/src/lib.rs)) over
-   every transaction in the N voting blocks (`header_deps[0].number + 1` through
-   `header_deps[1].number` inclusive). The start block (`header_deps[0]`) is the
-   proposal creation block and is excluded from vote counting.
+The `count_vote` algorithm described as follow:
    - A cell is counted as a vote when its type script `code_hash` /
      `hash_type` equals `vote_cell_code_hash` / `vote_cell_hash_type` from the
      proposal cell data **and** its type script `args` equals
      `blake160(proposal_type_script)`.
    - Its `Vote.amount` is recorded in a map keyed by the voter's lock script
-     hash. Duplicate keys overwrite, so a later vote from the same voter replaces
+     blake160 hash. Duplicate keys overwrite, so a later vote from the same voter replaces
      the earlier one (this is what enables vote retraction / changing a vote).
    - Each `Vote` carries a `dao_index`; the referenced DAO deposit out points are
-     recorded in a second map keyed by out point, valued by the voter's lock hash.
+     recorded in a second map keyed by out point, valued by the voter's lock blake160 hash.
      If any transaction in the range spends an out point already in that map, the
      associated voter is removed from both maps, preventing the same DAO deposit
      from being counted twice (double-vote resistance).
-4. **Decide.** After the final block is processed, aggregate `yes_vote` and
-   `no_vote` from the remaining entries. The proposal passes iff:
+
+### Consuming
+
+When the proposal cell is consumed (the type script is on the input side), the
+node determines the outcome by scanning the chain natively.
+
+The script verifies the following:
+
+1. The transaction provides `header_deps[0]` as the end block hash.
+   The start block is the block that produced the proposal cell being consumed
+   (the original creating block if never updated, otherwise the block of the latest
+   updating transaction). The node verifies that `header_deps[0].number`
+   equals the start block number plus the remaining `duration`. Since
+   `header_deps[0]` must be referenced, the end block is guaranteed to already
+   exist on-chain; this ensures a proposal can only be settled after the voting
+   window has closed.
+2. Read the `TallyCheckpoint` from `WitnessArgs.input_type` if `tally_checkpoint_hash` is not
+   zero, and verify that its blake160 hash matches. If `tally_checkpoint_hash` is all
+   zero, start from an empty `TallyCheckpoint`.
+3. Based on the current `TallyCheckpoint`, run the `count_vote` algorithm over every transaction in the voting blocks, from
+   the start block (exclusive) to the end block (inclusive) denoted by
+   `header_deps[0].number`. The start block was already counted in a previous
+   updating phase, or is the creating block and is excluded from vote counting.
+
+4. After the final block is processed, aggregate `yes_vote` and
+   `no_vote` from the remaining entries. The proposal passes if and only if:
 
    ```
    yes_vote > no_vote
@@ -170,7 +227,7 @@ required, but the transaction must supply two `header_deps`.
 
    (`Vote.amount` and the tallies are in shannon; `minimal_requirement` is in
    CKBytes, hence the `100_000_000` factor.)
-5. **Unlock.** If the proposal passes, the type script succeeds and the cell may
+5. If the proposal passes, the type script succeeds and the cell may
    be spent. Otherwise it fails and the cell remains unspendable.
 
 ## Cycle Charging
@@ -231,8 +288,8 @@ We will set the separate cycle limit to something like 50M (TODO). This value is
 - `duration` directly scales the amount of native work. A very large `duration`
   makes settlement expensive; the cycle charge (and therefore the fee) grows
   proportionally, so an attacker cannot force unpaid work.
-- Consider constraining `duration` at creation time (see
-  [Creation](#creation)) to bound the worst-case per-transaction scan.
+- Consider constraining `duration` at creating time (see
+  [creating](#creating)) to bound the worst-case per-transaction scan.
 
 ## Design Notes
 
@@ -242,17 +299,18 @@ We will set the separate cycle limit to something like 50M (TODO). This value is
   (blocks) beyond what the transaction references. This is acceptable only because
   the code runs inside the node against the canonical chain, where the data is
   authoritative and identical on every node.
-- **Determinism and reorgs.** The start block is pinned by `header_deps[0]` (and
-  verified against the consumed input's canonical creating block), the end block
-  by `header_deps[1]`, and the range is `duration + 1` blocks forward on the
-  canonical chain, so the result is identical across nodes. A chain reorg that
-  changes any block in the range (or the start block's position) changes the
-  result; this is inherent to reading chain state and is the same class of
-  concern that `header_deps` addresses for ordinary scripts.
+- **Determinism and reorgs.** At consuming time the end block is pinned by
+  `header_deps[0]`, and the start block is the canonical block that produced the
+  consumed proposal cell; the remaining range is the cell's `duration` blocks
+  forward on the canonical chain, so the result is identical across nodes.
+  Updating phases checkpoint intermediate `TallyCheckpoint` into `tally_checkpoint_hash`.
+  A chain reorg that changes any block in the scanned range (or a checkpoint
+  cell's position) changes the result; this is inherent to reading chain state
+  and is the same class of concern that `header_deps` addresses for ordinary scripts.
 - **Penalty on failure.** If a proposal fails, no one can recycle the cell. This
   is a deliberate penalty to discourage flooding the system with proposals.
-  Updating an existing proposal is likewise disallowed; the recommended approach
-  is to abandon it and create a new one.
+  Field changes outside the updating rules (e.g. rewriting `amount` or
+  `description`) are disallowed; abandon the proposal and create a new one.
 - **Reusable by third parties.** The proposal and vote scripts are not
   treasury-specific and can be integrated into third-party systems, which can
   reference this proposal type script.
@@ -275,6 +333,7 @@ Outputs:
     Proposal_Cell
         Data:
             Proposal (molecule):
+                tally_checkpoint_hash: 0x0000...00           # 20 zero bytes; no checkpoint yet
                 duration: 8640                          # ~1 day (8640 blocks x ~10s)
                 vote_cell_code_hash: <32-byte hash of vote type script>
                 vote_cell_hash_type: 0x01               # type
@@ -305,26 +364,94 @@ Witnesses:
     WitnessArgs structure:
         Lock: <proposer's signature>
         input_type: <none>
-        output_type: <none>                             # no witness needed on creation
+        output_type: <none>                             # no witness needed on creating
 ```
 
 ---
 
-### Example 2: Consuming a Proposal Cell (Proposal Passed)
+### Example 2: Updating a Proposal Cell (Optional Checkpoint)
 
-No type-script witness is required. The
-transaction supplies `header_deps[0]` (start block) and `header_deps[1]` (end
-block); the node verifies `header_deps[0]` is `Proposal_Cell`'s creating block
-and `header_deps[1].number == header_deps[0].number + duration`, scans the
-`duration + 1` blocks from its own storage, tallies the votes, and unlocks the
-cell because the proposal passed.
+Advances the checkpoint after scanning 1000 voting blocks. Input
+`tally_checkpoint_hash` is all zero, so no prior `TallyCheckpoint` is required in the
+witness. Output `duration` is reduced by the scanned block count and must stay
+non-zero. Output `tally_checkpoint_hash` is blake160 of the post-scan `TallyCheckpoint`.
 
 ```yaml
 Inputs:
-    Proposal_Cell                                       # start block = the block that created this cell
+    Proposal_Cell                                       # produced at block S (creating or prior update)
         Data:
             Proposal (molecule):
+                tally_checkpoint_hash: 0x0000...00           # or blake160 of prior TallyCheckpoint
                 duration: 8640
+                vote_cell_code_hash: <32-byte hash of vote type script>
+                vote_cell_hash_type: 0x01
+                description: "Fund infrastructure work Q3 2026"
+                receiver:
+                    code_hash: <secp256k1 code hash>
+                    hash_type: 0x01
+                    args: <20-byte blake160 of receiver pubkey>
+                amount: 1000
+                minimal_requirement: 5000
+        Type:
+            code_hash: <reserved embedded proposal type script code_hash>
+            hash_type: type
+            args:
+                <20-byte blake160 Type ID>              # same args as output
+        Lock:
+            code_hash: <always-success lock code_hash>
+            hash_type: <always-success lock hash_type>
+            args: <empty>
+
+Outputs:
+    Proposal_Cell                                       # this tx is included in block S+1000
+        Data:
+            Proposal (molecule):
+                tally_checkpoint_hash: <blake160(TallyCheckpoint)> # after count_vote over (S, S+1000]
+                duration: 7640                          # 8640 - 1000; must be > 0
+                vote_cell_code_hash: <32-byte hash of vote type script>
+                vote_cell_hash_type: 0x01
+                description: "Fund infrastructure work Q3 2026"
+                receiver:
+                    code_hash: <secp256k1 code hash>
+                    hash_type: 0x01
+                    args: <20-byte blake160 of receiver pubkey>
+                amount: 1000
+                minimal_requirement: 5000
+        Type:
+            code_hash: <reserved embedded proposal type script code_hash>
+            hash_type: type
+            args:
+                <20-byte blake160 Type ID>              # same args as input
+        Lock:
+            code_hash: <always-success lock code_hash>
+            hash_type: <always-success lock hash_type>
+            args: <empty>
+
+Witnesses:
+    WitnessArgs structure (proposal type script group):
+        Lock: <none>                                    # always-success lock
+        input_type: <TallyCheckpoint or none>                # required only if input.tally_checkpoint_hash != 0
+        output_type: <none>
+```
+
+---
+
+### Example 3: Consuming a Proposal Cell (Proposal Passed)
+
+The transaction supplies `header_deps[0]` as the end block. The start block is
+the block that produced the consumed `Proposal_Cell` (creating block, or the
+latest updating block). If `tally_checkpoint_hash` is non-zero, `WitnessArgs.input_type`
+carries the matching `TallyCheckpoint`. The node scans the remaining
+`duration` voting blocks, tallies votes, and unlocks the cell because the
+proposal passed.
+
+```yaml
+Inputs:
+    Proposal_Cell                                       # start block = block that produced this cell
+        Data:
+            Proposal (molecule):
+                tally_checkpoint_hash: <blake160(TallyCheckpoint)> # 0x00..00 if never updated
+                duration: 7640                          # remaining blocks after updates (or full N)
                 vote_cell_code_hash: <32-byte hash of vote type script>
                 vote_cell_hash_type: 0x01
                 description: "Fund infrastructure work Q3 2026"
@@ -365,18 +492,14 @@ Outputs:
             args: <empty>
 
 Header Deps:
-    header_deps[0]: <start block hash>                  # block containing the proposal cell
-    header_deps[1]: <end block hash>                    # start block + duration blocks later
-
-# No type-script witness. The node performs the scan:
-#   start_block   = header_deps[0]                       (must equal Proposal_Cell's creating block; reserved for proposal, not counted for votes)
-#   end_block     = header_deps[1]                       (must exist; number == start_block.number + duration)
-#   scan blocks [start_block .. end_block] inclusive (1 proposal block + duration voting blocks = duration + 1 total)
-#   tally votes from voting blocks only [start_block+1 .. end_block]
-#   tally votes -> yes_vote > no_vote && yes_vote + no_vote > minimal_requirement * 1e8
-#   -> passed -> unlock
+    header_deps[0]: <end block hash>                    # start_block.number + remaining duration
 
 Witnesses:
+    WitnessArgs structure (proposal type script group):
+        Lock: <none>                                    # always-success lock
+        input_type: <TallyCheckpoint or none>                # required if tally_checkpoint_hash != 0
+        output_type: <none>
+
     WitnessArgs structure (for the Treasury_Cell / funding inputs, as needed):
         Lock: <signature(s) required by those inputs' lock scripts>
         input_type: <none>
