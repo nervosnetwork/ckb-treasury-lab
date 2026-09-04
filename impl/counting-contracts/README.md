@@ -81,6 +81,8 @@ must be unique. The builder sorts all votes and cuts them directly at
 be split safely. When a Proposal aggregates Counting Cells, their full-hash
 ranges must be strictly ordered and non-overlapping.
 
+The current prototype configures `max_votes_per_counting_cell` as 2,000.
+
 ## Security Boundary
 
 Each Counting Cell proves the existence and exact subtotal of its included
@@ -174,6 +176,27 @@ Measured on 2026-09-04 with release RISC-V contracts:
 | 100 | 1,468,610 | 4.257 KB |
 | 500 | 6,948,185 | 19.057 KB |
 | 1,000 | 13,799,885 | 37.557 KB |
+| 2,000 | 27,504,245 | 74.557 KB |
+
+Proposal finalization consumes Counting Cells as inputs. It has no separate
+Counting Cell count in `CountingConfig`; transaction bytes and verification
+cycles provide the bounds. An ignored benchmark models every Counting Cell as
+a full 2,000-vote certificate:
+
+| Counting Cell inputs | Represented Vote Cells | CKB-VM cycles | Transaction size |
+| ---: | ---: | ---: | ---: |
+| 1 | 2,000 | 179,878 | 0.767 KB |
+| 1,000 | 2,000,000 | 18,359,620 | 44.723 KB |
+| 2,000 | 4,000,000 | 36,557,560 | 88.723 KB |
+| 3,837 | 7,674,000 | 69,987,211 | 169.551 KB |
+| 3,838 | 7,676,000 | 70,005,379 | 169.595 KB |
+| 13,000 | 26,000,000 | 236,734,915 | 572.723 KB |
+
+The default node tx-pool policy is 70M verification cycles, so 3,837 Counting
+Cells is the idealized relay boundary in this benchmark. Production locks,
+witnesses, fees, and transaction-building overhead require a lower operational
+limit. The 13,000-input row approaches the nominal 597 KB block byte limit and
+is not a practical relay target.
 
 Contract sizes:
 

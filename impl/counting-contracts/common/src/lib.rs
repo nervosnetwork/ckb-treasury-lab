@@ -582,7 +582,7 @@ mod tests {
             minimum_yes_amount: 100,
             maximum_proposal_amount: 1_000,
             minimum_challenge_period: 5,
-            max_votes_per_counting_cell: 1_000,
+            max_votes_per_counting_cell: 2_000,
             minimum_proposal_bond: 100,
             proposal_bond_rate_bps: 1_000,
             treasury_lock_hash: [1; 32],

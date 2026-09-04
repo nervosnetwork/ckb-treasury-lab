@@ -309,3 +309,38 @@ to each DAO deposit's lock script.
   intentionally omitted vote, successful challenge, complete re-tally,
   challenge-period maturity, final settlement, and Treasury payout. Report:
   `impl/target/live-e2e/1787274775-93275/report.json`.
+
+## Counting Cell Batch Limit Increase
+
+### Objective
+
+Increase the prototype's per-Counting-Cell Vote Cell limit from 1,000 to 2,000
+and measure how many Counting Cells a proposal finalization can consume.
+
+### Steps
+
+- [x] Update the shared test config and live-chain E2E config to 2,000 votes per
+  Counting Cell.
+- [x] Extend the Counting Cell creation benchmark to 2,000 Vote Cells.
+- [x] Add a proposal-finalization benchmark over increasing Counting Cell input
+  counts.
+- [x] Rebuild the contracts and run the standard Rust and CKB-VM tests.
+- [x] Redeploy the rebuilt contracts to a fresh local CKB chain and rerun the
+  challenge and successful Treasury payout paths.
+
+### Validation
+
+- A 2,000-vote Counting Cell transaction verifies in 27,504,245 cycles and is
+  74.557 KB.
+- The idealized finalization benchmark reaches 69,987,211 cycles with 3,837
+  Counting Cells and 70,005,379 cycles with 3,838 Counting Cells. The default
+  70M tx-pool verification policy therefore becomes the first relay boundary,
+  before transaction bytes.
+- With 2,000 Vote Cells represented by each Counting Cell, the benchmark's
+  idealized default-relay boundary represents 7,674,000 Vote Cells. This is a
+  certificate capacity, not a protocol-wide cap on votes cast for a Proposal.
+- All 16 standard Rust and CKB-VM tests passed; two cycle benchmarks remain
+  ignored by the normal suite and passed when run explicitly.
+- The fresh local-chain E2E passed both rejection-by-challenge and successful
+  finalization/payout paths. Report:
+  `impl/counting-contracts/target/live-e2e/1788491853-24710/report.json`.

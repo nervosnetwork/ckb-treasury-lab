@@ -86,7 +86,7 @@ impl Fixture {
             minimum_yes_amount: 100 * CKB as u128,
             maximum_proposal_amount: 1_000 * CKB,
             minimum_challenge_period: 5,
-            max_votes_per_counting_cell: 1_000,
+            max_votes_per_counting_cell: 2_000,
             minimum_proposal_bond: 100 * CKB,
             proposal_bond_rate_bps: 5_000,
             treasury_lock_hash: script_hash(&treasury_lock),
@@ -1114,10 +1114,74 @@ fn benchmark_counting_batch(vote_count: usize) -> (u64, usize) {
 #[test]
 #[ignore = "cycle benchmark"]
 fn benchmark_counting_cell_creation() {
-    for vote_count in [1usize, 10, 100, 500, 1_000] {
+    for vote_count in [1usize, 10, 100, 500, 1_000, 2_000] {
         let (cycles, transaction_bytes) = benchmark_counting_batch(vote_count);
         println!(
             "votes={vote_count:4} cycles={cycles:10} tx={:.3} KB",
+            transaction_bytes as f64 / 1_000.0
+        );
+    }
+}
+
+fn benchmark_finalize_batch(counting_count: usize) -> (u64, usize) {
+    let mut fixture = Fixture::new();
+    let closed = fixture.proposal(ProposalPhase::Closed, 0, 0);
+    let proposal_cell = fixture.proposal_cell(&closed);
+    let mut inputs = vec![input(proposal_cell)];
+    for index in 0..counting_count {
+        let mut range = [0u8; 32];
+        range[24..].copy_from_slice(&(index as u64).to_be_bytes());
+        let counting_cell = fixture.counting_cell(CountingCellData {
+            direction: 1,
+            range_start: range,
+            range_end: range,
+            amount: 100 * CKB as u128,
+            vote_count: fixture.config.max_votes_per_counting_cell,
+        });
+        inputs.push(input(counting_cell));
+    }
+
+    let mut finalized = closed;
+    finalized.phase = ProposalPhase::Finalized;
+    finalized.certified_yes_amount = counting_count as u128 * 100 * CKB as u128;
+    finalized.certified_yes_vote_count =
+        counting_count as u64 * fixture.config.max_votes_per_counting_cell as u64;
+    let returned_capacity = counting_count as u64 * 200 * CKB;
+    let tx = TransactionBuilder::default()
+        .cell_dep(fixture.config_dep())
+        .inputs(inputs)
+        .output(
+            CellOutput::new_builder()
+                .capacity(1_000 * CKB)
+                .lock(fixture.owner_lock.clone())
+                .type_(Some(fixture.proposal_type.clone()).pack())
+                .build(),
+        )
+        .output_data(Bytes::from(finalized.encode().unwrap()).pack())
+        .output(
+            CellOutput::new_builder()
+                .capacity(returned_capacity)
+                .lock(fixture.proposer_lock.clone())
+                .build(),
+        )
+        .output_data(Bytes::new().pack())
+        .build();
+    let tx = fixture.context.complete_tx(tx);
+    let transaction_bytes = tx.data().serialized_size_in_block();
+    let cycles = fixture.context.verify_tx(&tx, 3_500_000_000).unwrap();
+    (cycles, transaction_bytes)
+}
+
+#[test]
+#[ignore = "cycle benchmark"]
+fn benchmark_proposal_finalization() {
+    for counting_count in [
+        1usize, 10, 100, 500, 1_000, 2_000, 3_837, 3_838, 5_000, 10_000, 13_000,
+    ] {
+        let (cycles, transaction_bytes) = benchmark_finalize_batch(counting_count);
+        println!(
+            "counting_cells={counting_count:5} votes={:8} cycles={cycles:10} tx={:.3} KB",
+            counting_count * 2_000,
             transaction_bytes as f64 / 1_000.0
         );
     }

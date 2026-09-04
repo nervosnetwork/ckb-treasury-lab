@@ -314,7 +314,7 @@ fn run() -> AnyResult<()> {
         minimum_yes_amount: 100 * CKB as u128,
         maximum_proposal_amount: 1_000 * CKB,
         minimum_challenge_period: 5,
-        max_votes_per_counting_cell: 1_000,
+        max_votes_per_counting_cell: 2_000,
         minimum_proposal_bond: 1_500 * CKB,
         proposal_bond_rate_bps: 1_000,
         treasury_lock_hash: packed_hash(&treasury_lock.calc_script_hash()),
