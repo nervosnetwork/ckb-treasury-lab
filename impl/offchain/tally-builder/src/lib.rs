@@ -1054,6 +1054,7 @@ mod tests {
             minimum_vote_capacity: 1,
             requested_amount: 1000,
             receiver_lock_hash: [1; 32],
+            proposer_lock_hash: [7; 32],
             proposal_config_type_hash: [6; 32],
             metadata_hash: [5; 32],
         }
@@ -1067,6 +1068,9 @@ mod tests {
             minimum_challenge_period: 5,
             minimum_tally_bond: 5_000,
             treasury_lock_hash: [1; 32],
+            proposal_lock_hash: [6; 32],
+            guardian_lock_hash: [7; 32],
+            proposal_bond_burn_lock_hash: [8; 32],
             dao_code_hash: [9; 32],
             dao_hash_type: 1,
             proposal_code_hash: [10; 32],

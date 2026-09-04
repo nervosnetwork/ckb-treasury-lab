@@ -1,8 +1,159 @@
 # CKB DAO Treasury Implementation Plan
 
-Last updated: 2026-08-27
+Last updated: 2026-09-03
 
 Sizes in this document use decimal KB (`1 KB = 1,000 bytes`).
+
+## Hash-Range Counting Cells (2026-09-03)
+
+### Objective
+
+Implement the alternative on-chain voting design from xjd's Treasury brainstorm
+as a separate protocol path under `impl/counting-contracts/`. Vote Cells remain
+the authenticated source of voting weight. Independent transactions create
+range-bounded Counting Cells by loading Vote Cells as CellDeps, checking
+proposal and direction identity,
+requiring unique voter locks, and recomputing the declared subtotal. A proposal
+candidate aggregates non-overlapping YES ranges; during its challenge period,
+non-overlapping NO ranges may prove that the configured passing rule fails.
+
+The existing `impl/contracts/` SMT tally suite remains untouched and available
+for direct comparison. The Counting Cell workspace owns its common wire models,
+Proposal, Vote, Counting, and Policy contracts. No CKB node or consensus change
+is required for this path.
+
+### Steps
+
+- [x] Create branch `xjd-counting-cell-voting` without discarding the existing
+  uncommitted PoC changes.
+- [x] Re-fetch the latest gist and verify the existing 39-test baseline.
+- [x] Define canonical Counting Cell and finalized-proposal encodings in the
+  independent `counting-common` crate.
+- [x] Implement the Rust `counting-type-script` contract.
+- [x] Integrate YES candidate creation, NO challenge, and mature settlement with
+  Proposal and Policy Type Scripts.
+- [x] Add an off-chain Counting Cell builder.
+- [x] Add codec, CKB-VM, adversarial, and proposal-rule tests.
+- [x] Add a real-node E2E lifecycle covering proposal, votes, counting,
+  challenge, and settlement.
+- [x] Update the design document and compare contract size and transaction cost
+  with the SMT path.
+- [x] Run formatting, Clippy, all tests, and the live E2E from a freshly started
+  node.
+
+### Security Invariants
+
+- A Counting Cell amount is exactly the checked sum of its referenced Vote
+  Cells, not a claim supplied by the operator.
+- YES Counting Cells and the `Closed -> Finalized` transition require the
+  Proposal creator's lock authorization. NO Counting Cells remain
+  challenger-created so the Proposal creator cannot suppress counter-evidence.
+- The Proposal Cell's complete capacity is its bond and must be at least the
+  configured `minimum_proposal_bond`. A successful challenge transfers that
+  exact capacity to the unique lock shared by all consumed NO Counting Cells;
+  fees cannot be deducted from it or the reward redirected by an unrelated
+  input.
+- Approval uses a strict checked ratio comparison. Equality with the configured
+  threshold fails, so enough verified NO weight is a sufficient challenge
+  certificate even without proving the complete NO tally.
+- Vote Cells in one Counting Cell have strictly increasing full lock hashes, so
+  one voter lock cannot be counted twice in that Cell.
+- Counting ranges in one candidate or challenge are pairwise non-overlapping,
+  preventing the same lock-hash bucket from being accepted through two batches.
+- Counting Cell creation proves only the included subtotal. The candidate and
+  NO-challenge flow is an optimistic certificate, not a claim that every Vote
+  Cell in a range was included.
+- A candidate can be created only when its verified YES subtotal passes with
+  zero NO votes. A challenge succeeds only when its verified NO subtotal makes
+  the configured proposal rule fail.
+- The proposal's relative `since` enforces the challenge period before a passed
+  result can settle.
+
+### Validation
+
+- Five independent release CKB-VM contracts build between 56.192 KB and 76.360
+  KB. The Counting Type Script is 60.240 KB.
+- Codec, builder, and CKB-VM suites pass 12 non-ignored tests. The 1,000-vote
+  benchmark verifies in 14,331,162 cycles with a 37.463 KB transaction.
+- A fresh real node accepted DAO deposits, YES and NO Vote Cells, a
+  proposer-authorized YES Counting Cell, a proposer-authorized Finalized
+  Proposal, a challenger-authored NO Counting Cell, and a successful rejection
+  challenge. The Finalized Proposal and NO Counting Cell became dead while the
+  Rejected Result was then consumed by the challenger to claim the complete
+  1,500 CKB Proposal bond. Report:
+  `impl/counting-contracts/target/live-e2e/1788440203-52932/report.json`.
+
+## Pre-Settlement Guardian Veto (V7, 2026-08-27)
+
+### Objective
+
+Allow the configured Guardian to veto an Open or Closed Proposal at any time
+before final settlement. Veto consumes the singleton Proposal Cell, creates an
+auditable Vetoed Result Cell under the configured burn lock, and therefore
+prevents every competing TallyChain from settling. The Proposal bond is burned
+in full. Existing Active or Candidate TallyChainCells may be cleaned up, but
+each complete bond must be returned to its recorded tally operator. Active
+cleanup still satisfies the operator lock; Candidate cleanup uses the configured
+permissionless Candidate lock.
+
+### Design
+
+- Proposal Cells use the canonical permissionless lock committed by Proposal
+  Config. Proposal data commits the initiating proposer's lock hash.
+- Normal settlement returns the complete Proposal bond to that proposer lock.
+- Veto requires an independent input under the configured Guardian lock and
+  sends the complete Proposal bond to the configured burn lock as a typed
+  Vetoed Result Cell.
+- Normal settlement and veto consume the same singleton Proposal Cell, so only
+  one can commit.
+- A Vetoed Result Cell authorizes cleanup of any TallyChainCell for the same
+  Proposal. Cleanup cannot redirect or reduce the bond. The Cell is itself
+  immutable, so no third party can remove this cleanup credential.
+
+### Steps
+
+- [x] Audit the current Proposal, Result, Tally bond, Treasury burn, and live E2E
+  paths.
+- [x] Version the shared wire model with explicit Passed, RejectedByVote, and
+  Vetoed outcomes plus Guardian, proposal-lock, proposer, and burn commitments.
+- [x] Implement Proposal and Policy veto validation and normal Proposal-bond
+  return validation.
+- [x] Implement Active/Candidate TallyChain cleanup with exact operator-bond
+  refund.
+- [x] Add positive and adversarial common/contract tests.
+- [x] Extend the real-node E2E with veto, Proposal-bond burn, parallel
+  TallyChain cleanup, and exact operator refunds.
+- [x] Rebuild contracts and run formatting, Clippy, all tests, and the live E2E.
+- [x] Update protocol documentation and record final contract sizes and reports.
+
+### Implementation Notes
+
+- The shared fixed model is V2 and the tally witness is V7. Result outcomes are
+  `Passed`, `RejectedByVote`, or `Vetoed`.
+- A Vetoed Result is a permanently unspendable typed Cell, even if its burn lock
+  would otherwise authorize a spend. This both burns the Proposal bond and keeps
+  the tally-cleanup credential live.
+- Normal settlement and veto both preserve the Proposal Cell's complete capacity
+  in the Result output. The former locks it to the proposer; the latter locks it
+  to the configured burn lock.
+- Active tally cleanup requires the operator lock's normal authorization.
+  Candidate cleanup is permissionless. The Tally Type Script always enforces a
+  full-capacity, plain output to the recorded operator lock hash.
+
+### Validation
+
+- All seven release CKB-VM contracts rebuilt cleanly. Modified stripped sizes:
+  Proposal Type Script 71.096 KB, Policy Type Script 67.872 KB, Tally Type
+  Script 220.976 KB, and Treasury Lock Script 57.312 KB.
+- Formatting and Clippy completed without warnings. The common, builder, and
+  CKB-VM suites passed 39 non-ignored tests; three benchmark tests remain
+  intentionally ignored by the normal test target.
+- A fresh-node V7 E2E passed both the existing vote/challenge/payout lifecycle
+  and the Guardian path: two distinct operators created parallel TallyChains,
+  one reached a mature Candidate, veto consumed the Proposal Cell, stale
+  settlement and Vetoed-Result consumption were rejected, and 5,200/5,300 CKB
+  bonds were refunded exactly. Report:
+  `impl/target/live-e2e/1787826997-21466/report.json`.
 
 ## Vote-Time DAO Eligibility (2026-08-27)
 

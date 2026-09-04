@@ -1,0 +1,38 @@
+[workspace]
+resolver = "3"
+members = [
+  "common",
+  "contracts/counting-type-script",
+  "contracts/config-type-script",
+  "contracts/policy-type-script",
+  "contracts/proposal-type-script",
+  "contracts/vote-type-script",
+  "offchain/builder",
+  "offchain/live-e2e",
+  "tests",
+]
+
+[workspace.package]
+version = "0.1.0"
+license = "MIT"
+edition = "2024"
+rust-version = "1.95.0"
+
+[workspace.dependencies]
+ckb-hash = { version = "1.1.0", default-features = false, features = ["ckb-contract"] }
+ckb-gen-types = { version = "1.1.0", default-features = false, features = ["calc-hash"] }
+ckb-jsonrpc-types = "1.2.0"
+ckb-std = { version = "1.1", default-features = false, features = ["allocator", "calc-hash", "ckb-types", "dummy-atomic", "libc", "type-id"] }
+ckb-testtool = "1.1.1"
+counting-common = { path = "common" }
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.dev]
+panic = "abort"
+overflow-checks = true
+
+[profile.release]
+panic = "abort"
+overflow-checks = true

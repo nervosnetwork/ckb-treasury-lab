@@ -1,0 +1,9 @@
+[package]
+name = "counting-contract-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ckb-testtool.workspace = true
+counting-common.workspace = true

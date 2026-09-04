@@ -22,8 +22,8 @@ use tally_builder::{
     prove_transaction,
 };
 use treasury_common::{
-    Hash, OutPoint, ProposalConfig, ProposalData, ProposalPhase, ResultData, TallyWitness,
-    TreasuryConfig, VoteData, blake2b_256,
+    Hash, OutPoint, ProposalConfig, ProposalData, ProposalOutcome, ProposalPhase, ResultData,
+    TallyWitness, TreasuryConfig, VoteData, blake2b_256,
 };
 
 const CKB: u64 = 100_000_000;
@@ -312,6 +312,8 @@ fn run() -> AnyResult<()> {
     );
     let zero_lock = script(always_code_hash, DATA_HASH_TYPE, &[0]);
     let candidate_lock = script(always_code_hash, DATA_HASH_TYPE, &[0x22]);
+    let proposal_lock = script(always_code_hash, DATA_HASH_TYPE, &[0x23]);
+    let guardian_lock = script(always_code_hash, DATA_HASH_TYPE, &[0x24]);
     let proposal_config = ProposalConfig {
         approval_bps: 6_000,
         minimum_total_votes: 2_000 * CKB as u128,
@@ -319,6 +321,9 @@ fn run() -> AnyResult<()> {
         minimum_challenge_period: 5,
         minimum_tally_bond: 5_000 * CKB,
         treasury_lock_hash: packed_hash(&treasury_lock.calc_script_hash()),
+        proposal_lock_hash: packed_hash(&proposal_lock.calc_script_hash()),
+        guardian_lock_hash: packed_hash(&guardian_lock.calc_script_hash()),
+        proposal_bond_burn_lock_hash: packed_hash(&zero_lock.calc_script_hash()),
         dao_code_hash: packed_hash(&dao_type.code_hash()),
         dao_hash_type: TYPE_HASH_TYPE,
         proposal_code_hash: *code_hashes.get("proposal").unwrap(),
@@ -375,7 +380,7 @@ fn run() -> AnyResult<()> {
     let endpoint = format!("http://127.0.0.1:{rpc_port}");
     let mut rpc = Rpc::new(&endpoint)?;
     rpc.wait_ready()?;
-    println!("V6 live-chain E2E");
+    println!("V7 live-chain E2E");
     println!("  chain directory             {}", run_dir.display());
     println!("  RPC                         {endpoint}");
 
@@ -405,6 +410,11 @@ fn run() -> AnyResult<()> {
     }
 
     let proposer_lock = script(always_code_hash, DATA_HASH_TYPE, &[0x01]);
+    let veto_proposer_lock = script(always_code_hash, DATA_HASH_TYPE, &[0x02]);
+    let proposal_lock = script(always_code_hash, DATA_HASH_TYPE, &[0x23]);
+    let guardian_lock = script(always_code_hash, DATA_HASH_TYPE, &[0x24]);
+    let veto_operator1_lock = script(always_code_hash, DATA_HASH_TYPE, &[0x25]);
+    let veto_operator2_lock = script(always_code_hash, DATA_HASH_TYPE, &[0x26]);
     let voter1_lock = script(always_code_hash, DATA_HASH_TYPE, &[0x11]);
     let voter2_lock = script(always_code_hash, DATA_HASH_TYPE, &[0x12]);
     let late_voter_lock = script(always_code_hash, DATA_HASH_TYPE, &[0x13]);
@@ -413,6 +423,10 @@ fn run() -> AnyResult<()> {
     let receiver_lock = script(always_code_hash, DATA_HASH_TYPE, &[0x31]);
 
     let proposal_funding = find_cell(&cells, &proposer_lock, 1_500 * CKB)?;
+    let veto_proposal_funding = find_cell(&cells, &veto_proposer_lock, 1_500 * CKB)?;
+    let guardian_funding = find_cell(&cells, &guardian_lock, 100 * CKB)?;
+    let veto_operator1_funding = find_cell(&cells, &veto_operator1_lock, 5_200 * CKB)?;
+    let veto_operator2_funding = find_cell(&cells, &veto_operator2_lock, 5_300 * CKB)?;
     let dao1_funding = find_cell(&cells, &voter1_lock, 1_000 * CKB)?;
     let vote1_funding = find_cell(&cells, &voter1_lock, 500 * CKB)?;
     let dao2_funding = find_cell(&cells, &voter2_lock, 1_100 * CKB)?;
@@ -505,6 +519,7 @@ fn run() -> AnyResult<()> {
         minimum_vote_capacity: 500 * CKB,
         requested_amount: 100 * CKB,
         receiver_lock_hash: packed_hash(&receiver_lock.calc_script_hash()),
+        proposer_lock_hash: packed_hash(&proposer_lock.calc_script_hash()),
         proposal_config_type_hash: packed_hash(&proposal_config_type.calc_script_hash()),
         metadata_hash: blake2b_256(b"live E2E proposal"),
     };
@@ -518,7 +533,7 @@ fn run() -> AnyResult<()> {
         vec![],
         vec![output(
             1_500 * CKB,
-            &proposer_lock,
+            &proposal_lock,
             Some(proposal_type.clone()),
         )],
         vec![Bytes::from(open_proposal.encode())],
@@ -529,7 +544,7 @@ fn run() -> AnyResult<()> {
         &proposal_commit,
         0,
         1_500 * CKB,
-        &proposer_lock,
+        &proposal_lock,
         Some(&proposal_type),
         open_proposal.encode(),
     );
@@ -637,7 +652,7 @@ fn run() -> AnyResult<()> {
         vec![rpc.block_hash(end_block)?],
         vec![output(
             1_500 * CKB,
-            &proposer_lock,
+            &proposal_lock,
             Some(proposal_type.clone()),
         )],
         vec![Bytes::from(closed_proposal.encode())],
@@ -648,7 +663,7 @@ fn run() -> AnyResult<()> {
         &close_commit,
         0,
         1_500 * CKB,
-        &proposer_lock,
+        &proposal_lock,
         Some(&proposal_type),
         closed_proposal.encode(),
     );
@@ -835,7 +850,11 @@ fn run() -> AnyResult<()> {
         ));
     }
     let result_data = ResultData {
-        passed,
+        outcome: if passed {
+            ProposalOutcome::Passed
+        } else {
+            ProposalOutcome::RejectedByVote
+        },
         proposal_id,
         requested_amount: closed_proposal.requested_amount,
         receiver_lock_hash: closed_proposal.receiver_lock_hash,
@@ -843,6 +862,7 @@ fn run() -> AnyResult<()> {
         no: complete_candidate.no,
         final_state_hash: blake2b_256(&complete_candidate.encode()),
         proposal_config_data_hash: blake2b_256(&proposal_config.encode()),
+        veto_reason_hash: [0; 32],
     };
     let finalize_tx = transaction(
         vec![
@@ -938,6 +958,318 @@ fn run() -> AnyResult<()> {
         }
     }
 
+    let veto_start_block = rpc.tip_number()? + 3;
+    let veto_end_block = veto_start_block + 3;
+    let veto_proposal_input = input(&veto_proposal_funding.out_point);
+    let veto_proposal_type = script(
+        *code_hashes.get("proposal").unwrap(),
+        DATA1_HASH_TYPE,
+        &type_id(&veto_proposal_input, 0),
+    );
+    let veto_proposal_id = packed_hash(&veto_proposal_type.calc_script_hash());
+    let veto_open_proposal = ProposalData {
+        phase: ProposalPhase::Open,
+        start_block: veto_start_block,
+        end_block: veto_end_block,
+        challenge_period: 5,
+        max_events_per_batch: 100,
+        max_dao_deps_per_vote: 64,
+        max_state_keys_per_batch: 4096,
+        max_batch_sequence: 128,
+        max_batch_witness_bytes: 500_000,
+        minimum_vote_capacity: 500 * CKB,
+        requested_amount: 100 * CKB,
+        receiver_lock_hash: packed_hash(&receiver_lock.calc_script_hash()),
+        proposer_lock_hash: packed_hash(&veto_proposer_lock.calc_script_hash()),
+        proposal_config_type_hash: packed_hash(&proposal_config_type.calc_script_hash()),
+        metadata_hash: blake2b_256(b"live E2E guardian-veto proposal"),
+    };
+    let veto_proposal_tx = transaction(
+        vec![veto_proposal_input],
+        vec![
+            code_dep(&code_cells.always),
+            code_dep(&code_cells.proposal),
+            code_dep(&proposal_config_cell.out_point),
+        ],
+        vec![],
+        vec![output(
+            1_500 * CKB,
+            &proposal_lock,
+            Some(veto_proposal_type.clone()),
+        )],
+        vec![Bytes::from(veto_open_proposal.encode())],
+        vec![],
+    );
+    let veto_proposal_commit = rpc.commit("create veto proposal", veto_proposal_tx)?;
+    let veto_open_proposal_cell = output_cell(
+        &veto_proposal_commit,
+        0,
+        1_500 * CKB,
+        &proposal_lock,
+        Some(&veto_proposal_type),
+        veto_open_proposal.encode(),
+    );
+
+    rpc.mine_to(veto_end_block)?;
+    let mut veto_closed_proposal = veto_open_proposal.clone();
+    veto_closed_proposal.phase = ProposalPhase::Closed;
+    let veto_close_tx = transaction(
+        vec![input(&veto_open_proposal_cell.out_point)],
+        vec![code_dep(&code_cells.always), code_dep(&code_cells.proposal)],
+        vec![rpc.block_hash(veto_end_block)?],
+        vec![output(
+            1_500 * CKB,
+            &proposal_lock,
+            Some(veto_proposal_type.clone()),
+        )],
+        vec![Bytes::from(veto_closed_proposal.encode())],
+        vec![],
+    );
+    let veto_close_commit = rpc.commit("close veto proposal", veto_close_tx)?;
+    let veto_closed_proposal_cell = output_cell(
+        &veto_close_commit,
+        0,
+        1_500 * CKB,
+        &proposal_lock,
+        Some(&veto_proposal_type),
+        veto_closed_proposal.encode(),
+    );
+
+    let (veto_tally1_type, veto_tally1_active, mut veto_tally1_builder) = create_tally_session(
+        &mut rpc,
+        "create veto tally 1",
+        &code_cells,
+        *code_hashes.get("tally").unwrap(),
+        &veto_operator1_funding,
+        &veto_operator1_lock,
+        &veto_closed_proposal_cell,
+        &veto_closed_proposal,
+        veto_proposal_id,
+        &proposal_config_cell,
+        proposal_config,
+    )?;
+    let (_veto_tally2_type, veto_tally2_active, _veto_tally2_builder) = create_tally_session(
+        &mut rpc,
+        "create veto tally 2",
+        &code_cells,
+        *code_hashes.get("tally").unwrap(),
+        &veto_operator2_funding,
+        &veto_operator2_lock,
+        &veto_closed_proposal_cell,
+        &veto_closed_proposal,
+        veto_proposal_id,
+        &proposal_config_cell,
+        proposal_config,
+    )?;
+
+    let veto_voting_blocks = (veto_start_block..=veto_end_block)
+        .map(|number| chain_source.block_by_number(number))
+        .collect::<Result<Vec<_>, _>>()?;
+    let veto_scan = map_builder(
+        veto_tally1_builder.scan_blocks(&veto_closed_proposal, &veto_voting_blocks),
+        "scan veto proposal voting window",
+    )?;
+    let (veto_candidate, veto_batch) = map_builder(
+        veto_tally1_builder.build_batch(
+            &veto_closed_proposal,
+            veto_scan.blocks,
+            veto_scan.end_block,
+            veto_scan.end_tx_index,
+            veto_scan.candidate_since,
+        ),
+        "build veto proposal candidate",
+    )?;
+    let veto_candidate_tx = tally_advance_tx(
+        &code_cells,
+        &veto_closed_proposal_cell,
+        &proposal_config_cell,
+        &veto_tally1_active,
+        &candidate_lock,
+        &veto_tally1_type,
+        veto_candidate.encode(),
+        veto_scan.header_deps,
+        TallyWitness::Advance(veto_batch),
+    )?;
+    let veto_candidate_commit = rpc.commit("submit veto candidate", veto_candidate_tx)?;
+    let veto_candidate_cell = output_cell(
+        &veto_candidate_commit,
+        0,
+        capacity(&veto_tally1_active.output),
+        &candidate_lock,
+        Some(&veto_tally1_type),
+        veto_candidate.encode(),
+    );
+    let veto_challenge_deadline = veto_candidate_commit
+        .block_number
+        .checked_add(veto_closed_proposal.challenge_period)
+        .ok_or_else(|| other("veto challenge deadline overflow"))?;
+    rpc.mine_to(veto_challenge_deadline)?;
+
+    let vetoed_result_data = ResultData {
+        outcome: ProposalOutcome::Vetoed,
+        proposal_id: veto_proposal_id,
+        requested_amount: veto_closed_proposal.requested_amount,
+        receiver_lock_hash: veto_closed_proposal.receiver_lock_hash,
+        yes: 0,
+        no: 0,
+        final_state_hash: [0; 32],
+        proposal_config_data_hash: blake2b_256(&proposal_config.encode()),
+        veto_reason_hash: blake2b_256(b"live E2E malicious proposal"),
+    };
+    let veto_tx = transaction(
+        vec![
+            input(&veto_closed_proposal_cell.out_point),
+            input(&guardian_funding.out_point),
+        ],
+        vec![
+            code_dep(&code_cells.always),
+            code_dep(&code_cells.proposal),
+            code_dep(&code_cells.policy),
+            code_dep(&proposal_config_cell.out_point),
+        ],
+        vec![],
+        vec![
+            output(1_500 * CKB, &zero_lock, Some(policy_script.clone())),
+            output(capacity(&guardian_funding.output), &guardian_lock, None),
+        ],
+        vec![Bytes::from(vetoed_result_data.encode()), Bytes::new()],
+        vec![],
+    );
+    let veto_commit = rpc.commit("guardian veto proposal", veto_tx)?;
+    let vetoed_result_cell = output_cell(
+        &veto_commit,
+        0,
+        1_500 * CKB,
+        &zero_lock,
+        Some(&policy_script),
+        vetoed_result_data.encode(),
+    );
+
+    let stale_result_data = ResultData {
+        outcome: ProposalOutcome::RejectedByVote,
+        proposal_id: veto_proposal_id,
+        requested_amount: veto_closed_proposal.requested_amount,
+        receiver_lock_hash: veto_closed_proposal.receiver_lock_hash,
+        yes: veto_candidate.yes,
+        no: veto_candidate.no,
+        final_state_hash: blake2b_256(&veto_candidate.encode()),
+        proposal_config_data_hash: blake2b_256(&proposal_config.encode()),
+        veto_reason_hash: [0; 32],
+    };
+    let stale_settlement_tx = transaction(
+        vec![
+            input(&veto_closed_proposal_cell.out_point),
+            input_since(
+                &veto_candidate_cell.out_point,
+                0x8000_0000_0000_0000 | veto_closed_proposal.challenge_period,
+            ),
+        ],
+        vec![
+            code_dep(&code_cells.always),
+            code_dep(&code_cells.proposal),
+            code_dep(&code_cells.tally),
+            code_dep(&code_cells.policy),
+            code_dep(&proposal_config_cell.out_point),
+        ],
+        vec![],
+        vec![
+            output(
+                1_500 * CKB,
+                &veto_proposer_lock,
+                Some(policy_script.clone()),
+            ),
+            output(
+                capacity(&veto_candidate_cell.output),
+                &veto_operator1_lock,
+                None,
+            ),
+        ],
+        vec![Bytes::from(stale_result_data.encode()), Bytes::new()],
+        vec![
+            Bytes::new(),
+            input_type_witness(
+                TallyWitness::Finalize
+                    .encode()
+                    .map_err(|error| other(format!("encode stale finalize witness: {error:?}")))?,
+            ),
+        ],
+    );
+    let stale_settlement_rejection = rpc
+        .submit(stale_settlement_tx)
+        .expect_err("settlement using a veto-consumed Proposal Cell must fail")
+        .to_string();
+
+    let consume_vetoed_result_tx = transaction(
+        vec![input(&vetoed_result_cell.out_point)],
+        vec![
+            code_dep(&code_cells.always),
+            code_dep(&code_cells.policy),
+            code_dep(&proposal_config_cell.out_point),
+        ],
+        vec![],
+        vec![output(1_500 * CKB, &guardian_lock, None)],
+        vec![Bytes::new()],
+        vec![],
+    );
+    let vetoed_result_spend_rejection = rpc
+        .submit(consume_vetoed_result_tx)
+        .expect_err("a Vetoed Result Cell must be immutable")
+        .to_string();
+
+    let veto_candidate_cleanup = rpc.commit(
+        "refund veto tally 1",
+        tally_cleanup_vetoed_tx(
+            &code_cells,
+            &proposal_config_cell,
+            &vetoed_result_cell,
+            &veto_candidate_cell,
+            &veto_operator1_lock,
+        )?,
+    )?;
+    let veto_active_cleanup = rpc.commit(
+        "refund veto tally 2",
+        tally_cleanup_vetoed_tx(
+            &code_cells,
+            &proposal_config_cell,
+            &vetoed_result_cell,
+            &veto_tally2_active,
+            &veto_operator2_lock,
+        )?,
+    )?;
+    let veto_operator1_refund = out_point(veto_candidate_cleanup.hash, 0);
+    let veto_operator2_refund = out_point(veto_active_cleanup.hash, 0);
+    for (label, point, expected_live) in [
+        (
+            "veto-consumed Proposal Cell",
+            &veto_closed_proposal_cell.out_point,
+            false,
+        ),
+        (
+            "cleaned Candidate TallyChainCell",
+            &veto_candidate_cell.out_point,
+            false,
+        ),
+        (
+            "cleaned Active TallyChainCell",
+            &veto_tally2_active.out_point,
+            false,
+        ),
+        ("veto operator 1 refund", &veto_operator1_refund, true),
+        ("veto operator 2 refund", &veto_operator2_refund, true),
+        (
+            "immutable Vetoed Result",
+            &vetoed_result_cell.out_point,
+            true,
+        ),
+    ] {
+        let actual = rpc.live_status(point)?;
+        if (actual == "live") != expected_live {
+            return Err(other(format!(
+                "{label} status is {actual}, expected live={expected_live}"
+            )));
+        }
+    }
+
     let report = json!({
         "status": "passed",
         "node_binary": ckb_bin,
@@ -957,6 +1289,18 @@ fn run() -> AnyResult<()> {
             "passed": passed,
             "challenge_deadline": challenge_deadline,
         },
+        "guardian_veto": {
+            "voting_window": {
+                "start": veto_start_block,
+                "end": veto_end_block,
+            },
+            "candidate_challenge_deadline": veto_challenge_deadline,
+            "proposal_bond_burned": 1_500 * CKB,
+            "operator_1_refund": capacity(&veto_candidate_cell.output),
+            "operator_2_refund": capacity(&veto_tally2_active.output),
+            "stale_settlement_rejection": stale_settlement_rejection,
+            "vetoed_result_spend_rejection": vetoed_result_spend_rejection,
+        },
         "transactions": {
             "dao_deposit_1": commit_json(&dao1),
             "dao_deposit_2": commit_json(&dao2),
@@ -971,6 +1315,12 @@ fn run() -> AnyResult<()> {
             "complete_candidate": commit_json(&complete_candidate_commit),
             "finalize": commit_json(&finalize_commit),
             "payout": commit_json(&payout_commit),
+            "veto_proposal": commit_json(&veto_proposal_commit),
+            "veto_proposal_close": commit_json(&veto_close_commit),
+            "veto_candidate": commit_json(&veto_candidate_commit),
+            "guardian_veto": commit_json(&veto_commit),
+            "veto_candidate_cleanup": commit_json(&veto_candidate_cleanup),
+            "veto_active_cleanup": commit_json(&veto_active_cleanup),
         },
         "assertions": [
             "Treasury Cell was created by a mined Cellbase transaction",
@@ -981,12 +1331,16 @@ fn run() -> AnyResult<()> {
             "policy produced a passed Result Cell",
             "payout consumed both Result and Treasury inputs",
             "receiver payout and Treasury change remain live",
+            "Guardian veto consumed the singleton Proposal Cell after a Candidate matured",
+            "a stale settlement using the consumed Proposal Cell was rejected",
+            "the Vetoed Result Cell is immutable and keeps authorizing tally cleanup",
+            "Candidate and Active tally bonds were refunded exactly to distinct operators",
         ],
     });
     let report_path = run_dir.join("report.json");
     fs::write(&report_path, serde_json::to_vec_pretty(&report)?)?;
     println!("  report                      {}", report_path.display());
-    println!("V6 live-chain E2E PASSED");
+    println!("V7 live-chain E2E PASSED");
     Ok(())
 }
 
@@ -1035,7 +1389,7 @@ fn write_chain_spec(
          uncles_hash = \"0x0000000000000000000000000000000000000000000000000000000000000000\"\n\
          nonce = \"0x0\"\n\n\
          [genesis.genesis_cell]\n\
-         message = \"CKB Treasury V6 live E2E\"\n\n\
+         message = \"CKB Treasury V7 live E2E\"\n\n\
          [genesis.genesis_cell.lock]\n\
          code_hash = \"0xb35557e7e9854206f7bc13e3c3a7fa4cf8892c84a09237fb0aab40aab3771eee\"\n\
          args = \"0x\"\n\
@@ -1100,6 +1454,7 @@ fn write_chain_spec(
     )?;
     for (capacity, args) in [
         (1_500 * CKB, 0x01),
+        (1_500 * CKB, 0x02),
         (1_000 * CKB, 0x11),
         (500 * CKB, 0x11),
         (1_100 * CKB, 0x12),
@@ -1110,6 +1465,9 @@ fn write_chain_spec(
         (5_100 * CKB, 0x21),
         (100 * CKB, 0x21),
         (100 * CKB, 0x22),
+        (100 * CKB, 0x24),
+        (5_200 * CKB, 0x25),
+        (5_300 * CKB, 0x26),
     ] {
         append_issued_plain(
             &mut spec,
@@ -1530,6 +1888,32 @@ fn tally_advance_tx(
         vec![input_type_witness(witness.encode().map_err(|error| {
             other(format!("encode tally witness: {error:?}"))
         })?)],
+    ))
+}
+
+fn tally_cleanup_vetoed_tx(
+    code: &CodeCells,
+    proposal_config: &CellRef,
+    vetoed_result: &CellRef,
+    tally: &CellRef,
+    operator_lock: &packed::Script,
+) -> AnyResult<packed::Transaction> {
+    Ok(transaction(
+        vec![input(&tally.out_point)],
+        vec![
+            code_dep(&code.always),
+            code_dep(&code.tally),
+            code_dep(&proposal_config.out_point),
+            code_dep(&vetoed_result.out_point),
+        ],
+        vec![],
+        vec![output(capacity(&tally.output), operator_lock, None)],
+        vec![Bytes::new()],
+        vec![input_type_witness(
+            TallyWitness::CleanupVetoed
+                .encode()
+                .map_err(|error| other(format!("encode veto cleanup witness: {error:?}")))?,
+        )],
     ))
 }
 

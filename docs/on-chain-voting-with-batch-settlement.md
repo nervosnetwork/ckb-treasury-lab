@@ -2,7 +2,7 @@
 
 ## Status
 
-This document describes the V6 tally-witness implementation in `impl/`. VoteEventCells,
+This document describes the V7 tally-witness implementation in `impl/`. VoteEventCells,
 batch verification, challenges, passing-policy evaluation, treasury payout, burn,
 and grant timelocks execute in CKB-VM. The CKB node does not maintain a tally
 index and does not scan historical voting windows during transaction validation.
@@ -19,6 +19,8 @@ flowchart LR
     BN --> F["FinalCandidate"]
     F -->|"valid omission proof"| X["Candidate removed; bond to challenger"]
     F -->|"challenge period expires"| R["Passed or Failed Result Cell"]
+    C -->|"Guardian veto before settlement"| VR["Immutable Vetoed Result Cell"]
+    S -->|"Vetoed Result CellDep"| RF["Refund full bond to each operator"]
     R -->|"passed"| T["Treasury payout"]
     R -->|"failed"| Z["No treasury access"]
 ```
@@ -33,6 +35,9 @@ be consumed exactly once by the payout transaction.
   is consumed with one mature FinalCandidate to create one Result Cell. It
   stores proposal-specific parameters, one `proposal_config_type_hash`, and a
   metadata commitment; it does not duplicate protocol script or DAO identities.
+  A canonical permissionless Proposal lock permits either normal settlement or
+  a configured Guardian veto. Proposal data commits the initiating proposer's
+  lock hash so normal settlement cannot redirect the Proposal bond.
 - **VoteEventCell**: records `YES` or `NO`, the claimed amount, and canonical DAO
   outpoints. Its outpoint authenticates the VoteTx hash used by the transaction
   position proof. Its type args contain the full Proposal type-script hash. The
@@ -52,9 +57,12 @@ be consumed exactly once by the payout transaction.
   Config, so a valid challenge never needs the operator's signature. Creation,
   advance, challenge, and finalization all include the Proposal Config Cell and
   resolve authorized Proposal, Vote, Tally, and Candidate-lock identities from it.
-- **Result Cell**: evaluated by a versioned Policy Type Script. A passed result may
-  only be consumed by the configured Treasury Lock's payout action; the burn
-  action explicitly rejects Result inputs.
+- **Result Cell**: evaluated by a versioned Policy Type Script with explicit
+  `Passed`, `RejectedByVote`, and `Vetoed` outcomes. A passed result may only be
+  consumed by the configured Treasury Lock's payout action. A rejected result
+  may return the Proposal bond to the proposer. A Vetoed Result is immutable:
+  its full capacity is the burned Proposal bond and it remains a durable CellDep
+  authorizing cleanup of competing TallyChainCells.
 - **Treasury Cell**: created by CKB consensus using one fixed Treasury Lock. It can
   be spent by a passed result or burned after expiry.
 - **Grant Cell**: optional payout lock with an absolute block timelock and a
@@ -62,7 +70,8 @@ be consumed exactly once by the payout transaction.
 - **Proposal Config Cell**: an immutable Type-ID cell and the single source for
   the canonical Nervos DAO identity, authorized Proposal, Vote, and Tally code
   identities, exact Policy Type Script hash, passing rules, global proposal
-  amount cap, minimum challenge period, and minimum tally bond. An upgrade creates
+  amount cap, minimum challenge period, minimum tally bond, canonical Proposal
+  lock, Guardian lock, and Proposal-bond burn lock. An upgrade creates
   a new Proposal Config Cell; existing proposals continue to reference their
   original configuration. Test and devnet configurations use five blocks and a
   5,000 CKB absolute bond floor. Production deployments should use the same
@@ -118,10 +127,12 @@ stateDiagram-v2
     Active --> Candidate: verified final batch reaches end cursor
     Candidate --> [*]: valid omission challenge, slash bond
     Candidate --> [*]: challenge period expires, create Result
+    Active --> [*]: Guardian veto, refund full bond to operator
+    Candidate --> [*]: Guardian veto, refund full bond to operator
 ```
 
-Only a transaction containing an input with the operator lock hash may advance or
-finalize the session. Finalization additionally requires a relative block-number
+Only a transaction containing an input with the operator lock hash may create or
+advance the session. Finalization additionally requires a relative block-number
 `since` at least equal to the proposal challenge period on the Candidate input.
 Active batches preserve their lock, while the final batch must use Proposal
 Config's canonical permissionless Candidate lock. A challenge is therefore
@@ -268,6 +279,31 @@ then checks the Proposal input, Tally candidate, current Policy script, passing
 rule, and Treasury identity directly against that one source. Changing policy
 means deploying a new immutable Proposal Config version and creating future
 proposals that reference it. Node Rust code is unaffected.
+
+## Guardian veto and bond handling
+
+The Guardian may veto an `Open` or `Closed` Proposal at any time before normal
+settlement. The veto transaction must consume the singleton Proposal Cell and an
+input whose lock hash equals `ProposalConfig.guardian_lock_hash`. It creates one
+`Vetoed` Result Cell with exactly the Proposal Cell's full capacity under
+`proposal_bond_burn_lock_hash`. A nonzero reason hash is committed for audit;
+vote totals and final tally root must be zero because veto does not certify a
+tally result.
+
+Normal settlement and veto compete for the same Proposal outpoint, so at most
+one can commit. Once veto commits, a stale settlement cannot consume that
+Proposal Cell. The Vetoed Result itself cannot be consumed, even if its lock
+script would otherwise authorize a spend. This makes the proposer bond
+protocol-level burned capacity and preserves a permanent cleanup credential.
+
+An `Active` or `Candidate` TallyChainCell for the same Proposal may then be
+consumed while referencing the Vetoed Result and immutable Proposal Config as
+CellDeps. Active cleanup still requires the operator lock's normal authorization;
+Candidate cleanup is permissionless because the final batch already moved the
+Cell to the configured Candidate lock. In both cases, the Tally Type Script must
+create exactly one plain, empty-data output containing the complete tally bond
+under the `operator_lock_hash` recorded in that tally state. It cannot redirect
+the bond or deduct fees; any transaction fee requires an external input.
 
 ## Treasury payout and burn
 

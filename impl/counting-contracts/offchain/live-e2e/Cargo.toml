@@ -1,0 +1,13 @@
+[package]
+name = "counting-live-e2e"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ckb-gen-types.workspace = true
+ckb-jsonrpc-types.workspace = true
+counting-common.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true

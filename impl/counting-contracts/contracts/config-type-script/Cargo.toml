@@ -1,0 +1,8 @@
+[package]
+name = "counting-config-type-script"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ckb-std.workspace = true

@@ -16,9 +16,9 @@ use ckb_testtool::{
 use merkle_cbt::CBMT;
 use tally_builder::{TallyBuilder, prove_block_transactions, prove_transaction};
 use treasury_common::{
-    BatchWitness, MergeHash, ProposalConfig, ProposalData, ProposalPhase, ProvenVote, ResultData,
-    TallyPhase, TallyState, TallyWitness, TreasuryConfig, VoteData, blake2b_256, hash_pair,
-    transactions_root,
+    BatchWitness, MergeHash, ProposalConfig, ProposalData, ProposalOutcome, ProposalPhase,
+    ProvenVote, ResultData, TallyPhase, TallyState, TallyWitness, TreasuryConfig, VoteData,
+    blake2b_256, hash_pair, transactions_root,
 };
 
 const CKB: u64 = 100_000_000;
@@ -94,6 +94,7 @@ fn proposal(_proposal_id: [u8; 32], _vote_code_hash: [u8; 32]) -> ProposalData {
         minimum_vote_capacity: 100 * CKB,
         requested_amount: 1_000 * CKB,
         receiver_lock_hash: [1; 32],
+        proposer_lock_hash: [2; 32],
         proposal_config_type_hash: [6; 32],
         metadata_hash: [5; 32],
     }
@@ -118,6 +119,9 @@ fn tally_proposal_config(
         minimum_challenge_period: 5,
         minimum_tally_bond: 5_000 * CKB,
         treasury_lock_hash: [7; 32],
+        proposal_lock_hash: [0xa1; 32],
+        guardian_lock_hash: [0xa2; 32],
+        proposal_bond_burn_lock_hash: [0xa3; 32],
         dao_code_hash: [8; 32],
         dao_hash_type: 1,
         proposal_code_hash: proposal_type.code_hash().as_slice().try_into().unwrap(),
@@ -179,6 +183,9 @@ fn proposal_contract_uses_proposal_config_as_identity_source() {
         minimum_challenge_period: 5,
         minimum_tally_bond: 5_000 * CKB,
         treasury_lock_hash: [7; 32],
+        proposal_lock_hash: owner_lock.calc_script_hash().as_slice().try_into().unwrap(),
+        guardian_lock_hash: [0xa2; 32],
+        proposal_bond_burn_lock_hash: [0xa3; 32],
         dao_code_hash: [8; 32],
         dao_hash_type: 1,
         proposal_code_hash: proposal_identity.code_hash().as_slice().try_into().unwrap(),
@@ -221,6 +228,7 @@ fn proposal_contract_uses_proposal_config_as_identity_source() {
         .unwrap();
     let mut proposal = proposal(proposal_id, [4; 32]);
     proposal.phase = ProposalPhase::Open;
+    proposal.proposer_lock_hash = owner_lock.calc_script_hash().as_slice().try_into().unwrap();
     proposal.proposal_config_type_hash = config_type
         .calc_script_hash()
         .as_slice()
@@ -490,6 +498,9 @@ fn vote_contract_validates_configured_dao_type_and_amount() {
         minimum_challenge_period: 5,
         minimum_tally_bond: 5_000 * CKB,
         treasury_lock_hash: [7; 32],
+        proposal_lock_hash: [0xa1; 32],
+        guardian_lock_hash: [0xa2; 32],
+        proposal_bond_burn_lock_hash: [0xa3; 32],
         dao_code_hash: dao_type.code_hash().as_slice().try_into().unwrap(),
         dao_hash_type: dao_type.hash_type().as_slice()[0],
         proposal_code_hash: proposal_type.code_hash().as_slice().try_into().unwrap(),
@@ -787,6 +798,9 @@ fn policy_contract_rejects_proposal_bound_to_different_config() {
         minimum_challenge_period: 5,
         minimum_tally_bond: 5_000 * CKB,
         treasury_lock_hash: [7; 32],
+        proposal_lock_hash: owner_lock.calc_script_hash().as_slice().try_into().unwrap(),
+        guardian_lock_hash: [0xa2; 32],
+        proposal_bond_burn_lock_hash: [0xa3; 32],
         dao_code_hash: [8; 32],
         dao_hash_type: 1,
         proposal_code_hash: proposal_type.code_hash().as_slice().try_into().unwrap(),
@@ -816,6 +830,7 @@ fn policy_contract_rejects_proposal_bound_to_different_config() {
         .try_into()
         .unwrap();
     let mut proposal = proposal(proposal_id, [5; 32]);
+    proposal.proposer_lock_hash = owner_lock.calc_script_hash().as_slice().try_into().unwrap();
     proposal.proposal_config_type_hash = config_type
         .calc_script_hash()
         .as_slice()
@@ -845,7 +860,7 @@ fn policy_contract_rejects_proposal_bound_to_different_config() {
         Bytes::from(candidate_data.clone()),
     );
     let result = ResultData {
-        passed: true,
+        outcome: ProposalOutcome::Passed,
         proposal_id,
         requested_amount: proposal.requested_amount,
         receiver_lock_hash: proposal.receiver_lock_hash,
@@ -853,6 +868,7 @@ fn policy_contract_rejects_proposal_bound_to_different_config() {
         no: candidate.no,
         final_state_hash: blake2b_256(&candidate_data),
         proposal_config_data_hash: blake2b_256(&config.encode()),
+        veto_reason_hash: [0; 32],
     };
     let valid_proposal_cell = context.create_cell(
         CellOutput::new_builder()
@@ -907,6 +923,446 @@ fn policy_contract_rejects_proposal_bound_to_different_config() {
 }
 
 #[test]
+fn guardian_veto_requires_authorization_and_burns_the_full_proposal_bond() {
+    let mut context = Context::default();
+    let proposal_code = context.deploy_cell_by_name("proposal-type-script");
+    let policy_code = context.deploy_cell_by_name("policy-type-script");
+    let always_success = context.deploy_cell(ALWAYS_SUCCESS.clone());
+    let proposal_lock = context
+        .build_script(&always_success, Bytes::from(vec![0x31]))
+        .unwrap();
+    let proposer_lock = context
+        .build_script(&always_success, Bytes::from(vec![0x32]))
+        .unwrap();
+    let guardian_lock = context
+        .build_script(&always_success, Bytes::from(vec![0x33]))
+        .unwrap();
+    let stranger_lock = context
+        .build_script(&always_success, Bytes::from(vec![0x34]))
+        .unwrap();
+    let burn_lock = context
+        .build_script(&always_success, Bytes::from(vec![0x35]))
+        .unwrap();
+    let config_type = context
+        .build_script(&always_success, Bytes::from(vec![0x36]))
+        .unwrap();
+    let proposal_type = context
+        .build_script(&proposal_code, Bytes::from(vec![0x91; 32]))
+        .unwrap();
+    let policy_type = context
+        .build_script(&policy_code, config_type.calc_script_hash().as_bytes())
+        .unwrap();
+    let config = ProposalConfig {
+        approval_bps: 6_000,
+        minimum_total_votes: 1,
+        maximum_proposal_amount: 1_000 * CKB,
+        minimum_challenge_period: 5,
+        minimum_tally_bond: 5_000 * CKB,
+        treasury_lock_hash: [7; 32],
+        proposal_lock_hash: proposal_lock
+            .calc_script_hash()
+            .as_slice()
+            .try_into()
+            .unwrap(),
+        guardian_lock_hash: guardian_lock
+            .calc_script_hash()
+            .as_slice()
+            .try_into()
+            .unwrap(),
+        proposal_bond_burn_lock_hash: burn_lock.calc_script_hash().as_slice().try_into().unwrap(),
+        dao_code_hash: [8; 32],
+        dao_hash_type: 1,
+        proposal_code_hash: proposal_type.code_hash().as_slice().try_into().unwrap(),
+        proposal_hash_type: proposal_type.hash_type().as_slice()[0],
+        vote_code_hash: [9; 32],
+        vote_hash_type: 1,
+        tally_code_hash: [10; 32],
+        tally_hash_type: 1,
+        candidate_lock_hash: [11; 32],
+        policy_type_hash: policy_type
+            .calc_script_hash()
+            .as_slice()
+            .try_into()
+            .unwrap(),
+    };
+    let config_cell = context.create_cell(
+        CellOutput::new_builder()
+            .capacity(1_000 * CKB)
+            .lock(proposer_lock.clone())
+            .type_(Some(config_type.clone()).pack())
+            .build(),
+        Bytes::from(config.encode()),
+    );
+    let proposal_id = proposal_type
+        .calc_script_hash()
+        .as_slice()
+        .try_into()
+        .unwrap();
+    let mut data = proposal(proposal_id, [9; 32]);
+    data.proposer_lock_hash = proposer_lock
+        .calc_script_hash()
+        .as_slice()
+        .try_into()
+        .unwrap();
+    data.proposal_config_type_hash = config_type
+        .calc_script_hash()
+        .as_slice()
+        .try_into()
+        .unwrap();
+    let proposal_bond = 1_500 * CKB;
+    let proposal_cell = context.create_cell(
+        CellOutput::new_builder()
+            .capacity(proposal_bond)
+            .lock(proposal_lock.clone())
+            .type_(Some(proposal_type.clone()).pack())
+            .build(),
+        Bytes::from(data.encode()),
+    );
+    let mut open_data = data.clone();
+    open_data.phase = ProposalPhase::Open;
+    let open_proposal_cell = context.create_cell(
+        CellOutput::new_builder()
+            .capacity(proposal_bond)
+            .lock(proposal_lock)
+            .type_(Some(proposal_type).pack())
+            .build(),
+        Bytes::from(open_data.encode()),
+    );
+    let guardian_capacity = 100 * CKB;
+    let guardian_cell = context.create_cell(
+        CellOutput::new_builder()
+            .capacity(guardian_capacity)
+            .lock(guardian_lock.clone())
+            .build(),
+        Bytes::new(),
+    );
+    let stranger_cell = context.create_cell(
+        CellOutput::new_builder()
+            .capacity(guardian_capacity)
+            .lock(stranger_lock.clone())
+            .build(),
+        Bytes::new(),
+    );
+    let vetoed = ResultData {
+        outcome: ProposalOutcome::Vetoed,
+        proposal_id,
+        requested_amount: data.requested_amount,
+        receiver_lock_hash: data.receiver_lock_hash,
+        yes: 0,
+        no: 0,
+        final_state_hash: [0; 32],
+        proposal_config_data_hash: blake2b_256(&config.encode()),
+        veto_reason_hash: blake2b_256(b"spam proposal"),
+    };
+    let build = |proposal_cell: OutPoint,
+                 auth_cell: OutPoint,
+                 result_lock: Script,
+                 result_capacity: u64| {
+        TransactionBuilder::default()
+            .cell_dep(
+                CellDep::new_builder()
+                    .out_point(config_cell.clone())
+                    .build(),
+            )
+            .input(
+                CellInput::new_builder()
+                    .previous_output(proposal_cell.clone())
+                    .build(),
+            )
+            .input(CellInput::new_builder().previous_output(auth_cell).build())
+            .output(
+                CellOutput::new_builder()
+                    .capacity(result_capacity)
+                    .lock(result_lock)
+                    .type_(Some(policy_type.clone()).pack())
+                    .build(),
+            )
+            .output(
+                CellOutput::new_builder()
+                    .capacity(guardian_capacity)
+                    .lock(guardian_lock.clone())
+                    .build(),
+            )
+            .output_data(Bytes::from(vetoed.encode()).pack())
+            .output_data(Bytes::new().pack())
+            .build()
+    };
+
+    let unauthorized = context.complete_tx(build(
+        proposal_cell.clone(),
+        stranger_cell,
+        burn_lock.clone(),
+        proposal_bond,
+    ));
+    assert!(context.verify_tx(&unauthorized, 30_000_000).is_err());
+    let wrong_lock = context.complete_tx(build(
+        proposal_cell.clone(),
+        guardian_cell.clone(),
+        stranger_lock,
+        proposal_bond,
+    ));
+    assert!(context.verify_tx(&wrong_lock, 30_000_000).is_err());
+    let partial_burn = context.complete_tx(build(
+        proposal_cell.clone(),
+        guardian_cell.clone(),
+        burn_lock.clone(),
+        proposal_bond - CKB,
+    ));
+    assert!(context.verify_tx(&partial_burn, 30_000_000).is_err());
+    let valid = context.complete_tx(build(
+        proposal_cell,
+        guardian_cell.clone(),
+        burn_lock.clone(),
+        proposal_bond,
+    ));
+    context.verify_tx(&valid, 30_000_000).unwrap();
+    let open = context.complete_tx(build(
+        open_proposal_cell,
+        guardian_cell,
+        burn_lock,
+        proposal_bond,
+    ));
+    context.verify_tx(&open, 30_000_000).unwrap();
+}
+
+#[test]
+fn vetoed_result_refunds_active_and_candidate_tally_bonds_only_to_their_operators() {
+    let mut context = Context::default();
+    let tally_code = context.deploy_cell_by_name("tally-type-script");
+    let policy_code = context.deploy_cell_by_name("policy-type-script");
+    let always_success = context.deploy_cell(ALWAYS_SUCCESS.clone());
+    let operator_lock = context
+        .build_script(&always_success, Bytes::from(vec![0x41]))
+        .unwrap();
+    let candidate_lock = context
+        .build_script(&always_success, Bytes::from(vec![0x42]))
+        .unwrap();
+    let burn_lock = context
+        .build_script(&always_success, Bytes::from(vec![0x43]))
+        .unwrap();
+    let stranger_lock = context
+        .build_script(&always_success, Bytes::from(vec![0x44]))
+        .unwrap();
+    let config_type = context
+        .build_script(&always_success, Bytes::from(vec![0x45]))
+        .unwrap();
+    let tally_type = context
+        .build_script(&tally_code, Bytes::from(vec![0x92; 32]))
+        .unwrap();
+    let policy_type = context
+        .build_script(&policy_code, config_type.calc_script_hash().as_bytes())
+        .unwrap();
+    let config = ProposalConfig {
+        approval_bps: 6_000,
+        minimum_total_votes: 1,
+        maximum_proposal_amount: 1_000 * CKB,
+        minimum_challenge_period: 5,
+        minimum_tally_bond: 5_000 * CKB,
+        treasury_lock_hash: [7; 32],
+        proposal_lock_hash: [8; 32],
+        guardian_lock_hash: [9; 32],
+        proposal_bond_burn_lock_hash: burn_lock.calc_script_hash().as_slice().try_into().unwrap(),
+        dao_code_hash: [10; 32],
+        dao_hash_type: 1,
+        proposal_code_hash: [11; 32],
+        proposal_hash_type: 1,
+        vote_code_hash: [12; 32],
+        vote_hash_type: 1,
+        tally_code_hash: tally_type.code_hash().as_slice().try_into().unwrap(),
+        tally_hash_type: tally_type.hash_type().as_slice()[0],
+        candidate_lock_hash: candidate_lock
+            .calc_script_hash()
+            .as_slice()
+            .try_into()
+            .unwrap(),
+        policy_type_hash: policy_type
+            .calc_script_hash()
+            .as_slice()
+            .try_into()
+            .unwrap(),
+    };
+    let config_cell = context.create_cell(
+        CellOutput::new_builder()
+            .capacity(1_000 * CKB)
+            .lock(operator_lock.clone())
+            .type_(Some(config_type).pack())
+            .build(),
+        Bytes::from(config.encode()),
+    );
+    let proposal_id = [0x71; 32];
+    let vetoed = ResultData {
+        outcome: ProposalOutcome::Vetoed,
+        proposal_id,
+        requested_amount: 100 * CKB,
+        receiver_lock_hash: [0x72; 32],
+        yes: 0,
+        no: 0,
+        final_state_hash: [0; 32],
+        proposal_config_data_hash: blake2b_256(&config.encode()),
+        veto_reason_hash: blake2b_256(b"malicious extraction"),
+    };
+    let vetoed_result_cell = context.create_cell(
+        CellOutput::new_builder()
+            .capacity(1_500 * CKB)
+            .lock(burn_lock)
+            .type_(Some(policy_type.clone()).pack())
+            .build(),
+        Bytes::from(vetoed.encode()),
+    );
+    let rejected_result_cell = context.create_cell(
+        CellOutput::new_builder()
+            .capacity(1_500 * CKB)
+            .lock(stranger_lock.clone())
+            .type_(Some(policy_type).pack())
+            .build(),
+        Bytes::from(
+            ResultData {
+                outcome: ProposalOutcome::RejectedByVote,
+                proposal_id,
+                requested_amount: 100 * CKB,
+                receiver_lock_hash: [0x72; 32],
+                yes: 0,
+                no: 0,
+                final_state_hash: [0; 32],
+                proposal_config_data_hash: blake2b_256(&config.encode()),
+                veto_reason_hash: [0; 32],
+            }
+            .encode(),
+        ),
+    );
+    let consume_result = |result_cell: OutPoint| {
+        TransactionBuilder::default()
+            .cell_dep(
+                CellDep::new_builder()
+                    .out_point(config_cell.clone())
+                    .build(),
+            )
+            .input(
+                CellInput::new_builder()
+                    .previous_output(result_cell)
+                    .build(),
+            )
+            .output(
+                CellOutput::new_builder()
+                    .capacity(1_500 * CKB)
+                    .lock(stranger_lock.clone())
+                    .build(),
+            )
+            .output_data(Bytes::new().pack())
+            .build()
+    };
+    let consume_vetoed = context.complete_tx(consume_result(vetoed_result_cell.clone()));
+    assert!(context.verify_tx(&consume_vetoed, 30_000_000).is_err());
+    let consume_rejected = context.complete_tx(consume_result(rejected_result_cell.clone()));
+    context.verify_tx(&consume_rejected, 30_000_000).unwrap();
+
+    let operator_hash = operator_lock
+        .calc_script_hash()
+        .as_slice()
+        .try_into()
+        .unwrap();
+    let cleanup_witness = WitnessArgs::new_builder()
+        .input_type(Some(Bytes::from(TallyWitness::CleanupVetoed.encode().unwrap())).pack())
+        .build();
+    let (redirected, non_veto, reduced, active, candidate) = {
+        let mut build =
+            |phase: TallyPhase, result_cell: OutPoint, recipient: Script, full_refund: bool| {
+                let bond = if phase == TallyPhase::Active {
+                    5_000 * CKB
+                } else {
+                    5_100 * CKB
+                };
+                let state = TallyState {
+                    phase,
+                    proposal_id,
+                    operator_lock_hash: operator_hash,
+                    sequence: u32::from(phase == TallyPhase::Candidate),
+                    next_block: 10,
+                    next_tx_index: 0,
+                    state_root: [0; 32],
+                    yes: 0,
+                    no: 0,
+                    processed_events: 0,
+                    candidate_since: if phase == TallyPhase::Candidate {
+                        10
+                    } else {
+                        0
+                    },
+                };
+                let tally_cell = context.create_cell(
+                    CellOutput::new_builder()
+                        .capacity(bond)
+                        .lock(if phase == TallyPhase::Active {
+                            operator_lock.clone()
+                        } else {
+                            candidate_lock.clone()
+                        })
+                        .type_(Some(tally_type.clone()).pack())
+                        .build(),
+                    Bytes::from(state.encode()),
+                );
+                let tx = TransactionBuilder::default()
+                    .cell_dep(
+                        CellDep::new_builder()
+                            .out_point(config_cell.clone())
+                            .build(),
+                    )
+                    .cell_dep(CellDep::new_builder().out_point(result_cell).build())
+                    .input(CellInput::new_builder().previous_output(tally_cell).build())
+                    .output(
+                        CellOutput::new_builder()
+                            .capacity(if full_refund { bond } else { bond - CKB })
+                            .lock(recipient)
+                            .build(),
+                    )
+                    .output_data(Bytes::new().pack())
+                    .witness(cleanup_witness.as_bytes().pack())
+                    .build();
+                context.complete_tx(tx)
+            };
+
+        (
+            build(
+                TallyPhase::Active,
+                vetoed_result_cell.clone(),
+                stranger_lock,
+                true,
+            ),
+            build(
+                TallyPhase::Active,
+                rejected_result_cell,
+                operator_lock.clone(),
+                true,
+            ),
+            build(
+                TallyPhase::Active,
+                vetoed_result_cell.clone(),
+                operator_lock.clone(),
+                false,
+            ),
+            build(
+                TallyPhase::Active,
+                vetoed_result_cell.clone(),
+                operator_lock.clone(),
+                true,
+            ),
+            build(
+                TallyPhase::Candidate,
+                vetoed_result_cell,
+                operator_lock.clone(),
+                true,
+            ),
+        )
+    };
+
+    assert!(context.verify_tx(&redirected, 30_000_000).is_err());
+    assert!(context.verify_tx(&non_veto, 30_000_000).is_err());
+    assert!(context.verify_tx(&reduced, 30_000_000).is_err());
+    context.verify_tx(&active, 30_000_000).unwrap();
+    context.verify_tx(&candidate, 30_000_000).unwrap();
+}
+
+#[test]
 fn policy_requires_treasury_payout_action() {
     let mut context = Context::default();
     let policy_code = context.deploy_cell_by_name("policy-type-script");
@@ -934,6 +1390,9 @@ fn policy_requires_treasury_payout_action() {
             .as_slice()
             .try_into()
             .unwrap(),
+        proposal_lock_hash: [0xa1; 32],
+        guardian_lock_hash: [0xa2; 32],
+        proposal_bond_burn_lock_hash: [0xa3; 32],
         dao_code_hash: [8; 32],
         dao_hash_type: 1,
         proposal_code_hash: [9; 32],
@@ -972,7 +1431,7 @@ fn policy_requires_treasury_payout_action() {
             .build(),
         Bytes::from(
             ResultData {
-                passed: true,
+                outcome: ProposalOutcome::Passed,
                 proposal_id: [1; 32],
                 requested_amount: 100 * CKB,
                 receiver_lock_hash: [2; 32],
@@ -980,6 +1439,7 @@ fn policy_requires_treasury_payout_action() {
                 no: 0,
                 final_state_hash: [3; 32],
                 proposal_config_data_hash: blake2b_256(&config.encode()),
+                veto_reason_hash: [0; 32],
             }
             .encode(),
         ),
@@ -1933,7 +2393,7 @@ fn treasury_payout_preserves_treasury_capacity() {
         Bytes::new(),
     );
     let result = ResultData {
-        passed: true,
+        outcome: ProposalOutcome::Passed,
         proposal_id: [1; 32],
         requested_amount: 600 * CKB,
         receiver_lock_hash: receiver_lock
@@ -1956,6 +2416,9 @@ fn treasury_payout_preserves_treasury_capacity() {
                     .as_slice()
                     .try_into()
                     .unwrap(),
+                proposal_lock_hash: [0xa1; 32],
+                guardian_lock_hash: [0xa2; 32],
+                proposal_bond_burn_lock_hash: [0xa3; 32],
                 dao_code_hash: [9; 32],
                 dao_hash_type: 1,
                 proposal_code_hash: [10; 32],
@@ -1969,6 +2432,7 @@ fn treasury_payout_preserves_treasury_capacity() {
             }
             .encode(),
         ),
+        veto_reason_hash: [0; 32],
     };
     let result_input = context.create_cell(
         CellOutput::new_builder()
@@ -2079,7 +2543,7 @@ fn treasury_receiver_cannot_alias_change_output() {
             .build(),
         Bytes::from(
             ResultData {
-                passed: true,
+                outcome: ProposalOutcome::Passed,
                 proposal_id: [1; 32],
                 requested_amount: 500 * CKB,
                 receiver_lock_hash: treasury_lock
@@ -2091,6 +2555,7 @@ fn treasury_receiver_cannot_alias_change_output() {
                 no: 0,
                 final_state_hash: [2; 32],
                 proposal_config_data_hash: [3; 32],
+                veto_reason_hash: [0; 32],
             }
             .encode(),
         ),
@@ -2215,7 +2680,7 @@ fn expired_treasury_cell_can_be_burned_with_capped_incentive() {
             .build(),
         Bytes::from(
             ResultData {
-                passed: true,
+                outcome: ProposalOutcome::Passed,
                 proposal_id: [1; 32],
                 requested_amount: 100 * CKB,
                 receiver_lock_hash: [2; 32],
@@ -2223,6 +2688,7 @@ fn expired_treasury_cell_can_be_burned_with_capped_incentive() {
                 no: 0,
                 final_state_hash: [3; 32],
                 proposal_config_data_hash: [4; 32],
+                veto_reason_hash: [0; 32],
             }
             .encode(),
         ),

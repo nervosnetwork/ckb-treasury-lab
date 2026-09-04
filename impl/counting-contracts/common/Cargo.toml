@@ -1,0 +1,8 @@
+[package]
+name = "counting-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ckb-hash.workspace = true

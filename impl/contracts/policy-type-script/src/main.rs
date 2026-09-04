@@ -8,12 +8,13 @@ use ckb_std::{
     ckb_constants::Source,
     ckb_types::prelude::Entity,
     high_level::{
-        QueryIter, load_cell_data, load_cell_lock_hash, load_cell_type, load_cell_type_hash,
-        load_script, load_script_hash, load_witness_args,
+        QueryIter, load_cell_capacity, load_cell_data, load_cell_lock_hash, load_cell_type,
+        load_cell_type_hash, load_script, load_script_hash, load_witness_args,
     },
 };
 use treasury_common::{
-    ProposalConfig, ProposalData, ResultData, TallyPhase, TallyState, blake2b_256,
+    ProposalConfig, ProposalData, ProposalOutcome, ProposalPhase, ResultData, TallyPhase,
+    TallyState, blake2b_256,
 };
 
 const TREASURY_ACTION_PAYOUT: u8 = 1;
@@ -30,6 +31,9 @@ enum Error {
     ResultMismatch,
     InvalidPayout,
     ProposalPolicyMismatch,
+    GuardianMissing,
+    ResultLockInvalid,
+    VetoedResultImmutable,
 }
 
 pub fn program_entry() -> i8 {
@@ -89,16 +93,39 @@ fn create_result(
         }
         let data = load_cell_data(index, Source::Input).map_err(|_| Error::ProposalNotFound)?;
         let parsed = ProposalData::decode(&data).map_err(|_| Error::ProposalNotFound)?;
-        if proposal.replace((parsed, type_script)).is_some() {
+        if proposal.replace((index, parsed, type_script)).is_some() {
             return Err(Error::ProposalNotFound);
         }
     }
-    let (proposal, proposal_script) = proposal.ok_or(Error::ProposalNotFound)?;
+    let (proposal_index, proposal, proposal_script) = proposal.ok_or(Error::ProposalNotFound)?;
     if proposal.proposal_config_type_hash != config_type_hash
         || proposal_script.code_hash().as_slice() != config.proposal_code_hash
         || proposal_script.hash_type().as_slice()[0] != config.proposal_hash_type
     {
         return Err(Error::ProposalPolicyMismatch);
+    }
+
+    if result.proposal_id != proposal_script.calc_script_hash().as_slice()
+        || result.requested_amount != proposal.requested_amount
+        || result.receiver_lock_hash != proposal.receiver_lock_hash
+        || load_cell_capacity(0, Source::GroupOutput).map_err(|_| Error::ResultLockInvalid)?
+            != load_cell_capacity(proposal_index, Source::Input)
+                .map_err(|_| Error::ResultLockInvalid)?
+        || load_cell_lock_hash(proposal_index, Source::Input)
+            .map_err(|_| Error::ResultLockInvalid)?
+            != config.proposal_lock_hash
+    {
+        return Err(Error::ResultMismatch);
+    }
+
+    if result.is_vetoed() {
+        return validate_veto(&config);
+    }
+    if proposal.phase != ProposalPhase::Closed
+        || load_cell_lock_hash(0, Source::GroupOutput).map_err(|_| Error::ResultLockInvalid)?
+            != proposal.proposer_lock_hash
+    {
+        return Err(Error::ResultLockInvalid);
     }
 
     let mut candidate = None;
@@ -119,10 +146,13 @@ fn create_result(
         }
     }
     let (candidate, candidate_data) = candidate.ok_or(Error::CandidateNotFound)?;
-    let expected_passed = config.passes(candidate.yes, candidate.no, proposal.requested_amount);
-    if result.passed != expected_passed
-        || result.requested_amount != proposal.requested_amount
-        || result.receiver_lock_hash != proposal.receiver_lock_hash
+    let expected_outcome = if config.passes(candidate.yes, candidate.no, proposal.requested_amount)
+    {
+        ProposalOutcome::Passed
+    } else {
+        ProposalOutcome::RejectedByVote
+    };
+    if result.outcome != expected_outcome
         || result.yes != candidate.yes
         || result.no != candidate.no
         || result.final_state_hash != blake2b_256(&candidate_data)
@@ -132,10 +162,28 @@ fn create_result(
     Ok(())
 }
 
+fn validate_veto(config: &ProposalConfig) -> Result<(), Error> {
+    if load_cell_lock_hash(0, Source::GroupOutput).map_err(|_| Error::ResultLockInvalid)?
+        != config.proposal_bond_burn_lock_hash
+    {
+        return Err(Error::ResultLockInvalid);
+    }
+    if QueryIter::new(load_cell_lock_hash, Source::Input)
+        .any(|lock_hash| lock_hash == config.guardian_lock_hash)
+    {
+        Ok(())
+    } else {
+        Err(Error::GuardianMissing)
+    }
+}
+
 fn consume_result(config: ProposalConfig) -> Result<(), Error> {
     let result_data = load_cell_data(0, Source::GroupInput).map_err(|_| Error::ResultInvalid)?;
     let result = ResultData::decode(&result_data).map_err(|_| Error::ResultInvalid)?;
-    if !result.passed {
+    if result.is_vetoed() {
+        return Err(Error::VetoedResultImmutable);
+    }
+    if !result.is_passed() {
         return Ok(());
     }
     let treasury_index = QueryIter::new(load_cell_lock_hash, Source::Input)

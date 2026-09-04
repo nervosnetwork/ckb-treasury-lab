@@ -1,0 +1,8 @@
+[package]
+name = "counting-builder"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+counting-common.workspace = true

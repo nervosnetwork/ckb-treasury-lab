@@ -14,7 +14,8 @@ use ckb_std::{
     type_id::check_type_id,
 };
 use treasury_common::{
-    ProposalConfig, ProposalData, ProposalPhase, ResultData, TallyPhase, TallyState, blake2b_256,
+    ProposalConfig, ProposalData, ProposalOutcome, ProposalPhase, ResultData, TallyPhase,
+    TallyState, blake2b_256,
 };
 
 #[repr(i8)]
@@ -31,6 +32,10 @@ enum Error {
     ConfigInvalid,
     ContractIdentityMismatch,
     ChallengePeriodTooShort,
+    ProposalLockInvalid,
+    ProposerMissing,
+    GuardianMissing,
+    ResultLockInvalid,
 }
 
 pub fn program_entry() -> i8 {
@@ -61,7 +66,7 @@ fn create() -> Result<(), Error> {
     if proposal.phase != ProposalPhase::Open {
         return Err(Error::InvalidTransition);
     }
-    let config = load_proposal_config(proposal.proposal_config_type_hash)?;
+    let (config, _) = load_proposal_config(proposal.proposal_config_type_hash)?;
     let script = load_script().map_err(|_| Error::ContractIdentityMismatch)?;
     if script.code_hash().as_slice() != config.proposal_code_hash
         || script.hash_type().as_slice()[0] != config.proposal_hash_type
@@ -71,6 +76,12 @@ fn create() -> Result<(), Error> {
     if proposal.challenge_period < config.minimum_challenge_period {
         return Err(Error::ChallengePeriodTooShort);
     }
+    if load_cell_lock_hash(0, Source::GroupOutput).map_err(|_| Error::ProposalLockInvalid)?
+        != config.proposal_lock_hash
+    {
+        return Err(Error::ProposalLockInvalid);
+    }
+    require_input_lock(proposal.proposer_lock_hash, Error::ProposerMissing)?;
     Ok(())
 }
 
@@ -99,15 +110,57 @@ fn close() -> Result<(), Error> {
 
 fn finalize() -> Result<(), Error> {
     let proposal = load_proposal(0, Source::GroupInput)?;
+    let (config, config_data) = load_proposal_config(proposal.proposal_config_type_hash)?;
+    let proposal_id = load_script_hash().map_err(|_| Error::InvalidTransition)?;
+    if load_cell_lock_hash(0, Source::GroupInput).map_err(|_| Error::ProposalLockInvalid)?
+        != config.proposal_lock_hash
+    {
+        return Err(Error::ProposalLockInvalid);
+    }
+
+    let proposal_capacity =
+        load_cell_capacity(0, Source::GroupInput).map_err(|_| Error::ResultMismatch)?;
+    let (result_index, result) = load_result_output(&config)?;
+    if result.proposal_id != proposal_id
+        || result.requested_amount != proposal.requested_amount
+        || result.receiver_lock_hash != proposal.receiver_lock_hash
+        || result.proposal_config_data_hash != blake2b_256(&config_data)
+        || load_cell_capacity(result_index, Source::Output).map_err(|_| Error::ResultMismatch)?
+            != proposal_capacity
+    {
+        return Err(Error::ResultMismatch);
+    }
+
+    if result.is_vetoed() {
+        return veto(&config, result_index);
+    }
+    settle(&proposal, &config, &result, result_index, proposal_id)
+}
+
+fn veto(config: &ProposalConfig, result_index: usize) -> Result<(), Error> {
+    require_input_lock(config.guardian_lock_hash, Error::GuardianMissing)?;
+    if load_cell_lock_hash(result_index, Source::Output).map_err(|_| Error::ResultLockInvalid)?
+        != config.proposal_bond_burn_lock_hash
+    {
+        return Err(Error::ResultLockInvalid);
+    }
+    Ok(())
+}
+
+fn settle(
+    proposal: &ProposalData,
+    config: &ProposalConfig,
+    result: &ResultData,
+    result_index: usize,
+    proposal_id: [u8; 32],
+) -> Result<(), Error> {
     if proposal.phase != ProposalPhase::Closed {
         return Err(Error::InvalidTransition);
     }
-    let config = load_proposal_config(proposal.proposal_config_type_hash)?;
-    let proposal_id = load_script_hash().map_err(|_| Error::InvalidTransition)?;
 
     let mut candidate = None;
     for (index, type_script) in QueryIter::new(load_cell_type, Source::Input).enumerate() {
-        if is_tally_script(&type_script, &config) {
+        if is_tally_script(&type_script, config) {
             let data = load_cell_data(index, Source::Input).map_err(|_| Error::MissingCandidate)?;
             let tally = TallyState::decode(&data).map_err(|_| Error::MissingCandidate)?;
             if tally.phase == TallyPhase::Candidate && tally.proposal_id == proposal_id {
@@ -120,34 +173,45 @@ fn finalize() -> Result<(), Error> {
     }
     let (candidate, candidate_data) = candidate.ok_or(Error::MissingCandidate)?;
 
-    let proposal_capacity =
-        load_cell_capacity(0, Source::GroupInput).map_err(|_| Error::ResultMismatch)?;
+    let expected_outcome = if config.passes(candidate.yes, candidate.no, proposal.requested_amount)
+    {
+        ProposalOutcome::Passed
+    } else {
+        ProposalOutcome::RejectedByVote
+    };
+    if result.outcome != expected_outcome
+        || result.yes != candidate.yes
+        || result.no != candidate.no
+        || result.final_state_hash != blake2b_256(&candidate_data)
+        || load_cell_lock_hash(result_index, Source::Output)
+            .map_err(|_| Error::ResultLockInvalid)?
+            != proposal.proposer_lock_hash
+    {
+        return Err(Error::ResultMismatch);
+    }
+    Ok(())
+}
+
+fn load_result_output(config: &ProposalConfig) -> Result<(usize, ResultData), Error> {
     let mut result = None;
     for (index, type_hash) in QueryIter::new(load_cell_type_hash, Source::Output).enumerate() {
         if type_hash == Some(config.policy_type_hash) {
             let data = load_cell_data(index, Source::Output).map_err(|_| Error::MissingResult)?;
             let parsed = ResultData::decode(&data).map_err(|_| Error::MissingResult)?;
-            if load_cell_capacity(index, Source::Output).map_err(|_| Error::ResultMismatch)?
-                != proposal_capacity
-            {
-                return Err(Error::ResultMismatch);
-            }
-            if result.replace(parsed).is_some() {
+            if result.replace((index, parsed)).is_some() {
                 return Err(Error::MissingResult);
             }
         }
     }
-    let result = result.ok_or(Error::MissingResult)?;
-    if result.proposal_id != proposal_id
-        || result.requested_amount != proposal.requested_amount
-        || result.receiver_lock_hash != proposal.receiver_lock_hash
-        || result.yes != candidate.yes
-        || result.no != candidate.no
-        || result.final_state_hash != blake2b_256(&candidate_data)
-    {
-        return Err(Error::ResultMismatch);
+    result.ok_or(Error::MissingResult)
+}
+
+fn require_input_lock(lock_hash: [u8; 32], error: Error) -> Result<(), Error> {
+    if QueryIter::new(load_cell_lock_hash, Source::Input).any(|input| input == lock_hash) {
+        Ok(())
+    } else {
+        Err(error)
     }
-    Ok(())
 }
 
 fn is_tally_script(
@@ -165,11 +229,14 @@ fn load_proposal(index: usize, source: Source) -> Result<ProposalData, Error> {
     ProposalData::decode(&data).map_err(|_| Error::InvalidProposalData)
 }
 
-fn load_proposal_config(config_type_hash: [u8; 32]) -> Result<ProposalConfig, Error> {
+fn load_proposal_config(
+    config_type_hash: [u8; 32],
+) -> Result<(ProposalConfig, alloc::vec::Vec<u8>), Error> {
     for (index, type_hash) in QueryIter::new(load_cell_type_hash, Source::CellDep).enumerate() {
         if type_hash == Some(config_type_hash) {
             let data = load_cell_data(index, Source::CellDep).map_err(|_| Error::ConfigInvalid)?;
-            return ProposalConfig::decode(&data).map_err(|_| Error::ConfigInvalid);
+            let config = ProposalConfig::decode(&data).map_err(|_| Error::ConfigInvalid)?;
+            return Ok((config, data));
         }
     }
     Err(Error::ConfigNotFound)

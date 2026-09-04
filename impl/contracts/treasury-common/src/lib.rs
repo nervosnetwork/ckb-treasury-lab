@@ -7,14 +7,14 @@ use ckb_hash::new_blake2b;
 use merkle_cbt::{MerkleProof, merkle_tree::Merge};
 use sparse_merkle_tree::{CompiledMerkleProof, H256, blake2b::Blake2bHasher};
 
-pub const VERSION: u8 = 1;
-pub const TALLY_WITNESS_VERSION: u8 = 6;
+pub const VERSION: u8 = 2;
+pub const TALLY_WITNESS_VERSION: u8 = 7;
 pub const VOTE_STATE_NAMESPACE: u8 = 0;
 pub const EVENT_STATE_NAMESPACE: u8 = 1;
-pub const PROPOSAL_DATA_LEN: usize = 150;
+pub const PROPOSAL_DATA_LEN: usize = 182;
 pub const TALLY_STATE_LEN: usize = 162;
-pub const RESULT_DATA_LEN: usize = 170;
-pub const PROPOSAL_CONFIG_LEN: usize = 271;
+pub const RESULT_DATA_LEN: usize = 202;
+pub const PROPOSAL_CONFIG_LEN: usize = 367;
 pub const TREASURY_CONFIG_LEN: usize = 97;
 pub const EVENT_PRESENT: Hash = [
     1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -23,6 +23,7 @@ pub const EVENT_PRESENT: Hash = [
 pub const TALLY_ACTION_ADVANCE: u8 = 0;
 pub const TALLY_ACTION_CHALLENGE_VOTE: u8 = 1;
 pub const TALLY_ACTION_FINALIZE: u8 = 3;
+pub const TALLY_ACTION_CLEANUP_VETOED: u8 = 4;
 
 pub type Hash = [u8; 32];
 
@@ -57,6 +58,27 @@ pub enum CodecError {
 pub enum ProposalPhase {
     Open = 0,
     Closed = 1,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ProposalOutcome {
+    Passed = 0,
+    RejectedByVote = 1,
+    Vetoed = 2,
+}
+
+impl TryFrom<u8> for ProposalOutcome {
+    type Error = CodecError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Passed),
+            1 => Ok(Self::RejectedByVote),
+            2 => Ok(Self::Vetoed),
+            _ => Err(CodecError::InvalidValue),
+        }
+    }
 }
 
 impl TryFrom<u8> for ProposalPhase {
@@ -236,6 +258,7 @@ pub struct ProposalData {
     pub minimum_vote_capacity: u64,
     pub requested_amount: u64,
     pub receiver_lock_hash: Hash,
+    pub proposer_lock_hash: Hash,
     pub proposal_config_type_hash: Hash,
     pub metadata_hash: Hash,
 }
@@ -261,6 +284,7 @@ impl ProposalData {
             minimum_vote_capacity: reader.u64()?,
             requested_amount: reader.u64()?,
             receiver_lock_hash: reader.hash()?,
+            proposer_lock_hash: reader.hash()?,
             proposal_config_type_hash: reader.hash()?,
             metadata_hash: reader.hash()?,
         };
@@ -274,6 +298,7 @@ impl ProposalData {
             || value.max_batch_witness_bytes == 0
             || value.minimum_vote_capacity == 0
             || value.requested_amount == 0
+            || value.proposer_lock_hash == [0; 32]
             || value.proposal_config_type_hash == [0; 32]
         {
             return Err(CodecError::InvalidValue);
@@ -296,6 +321,7 @@ impl ProposalData {
         output.extend_from_slice(&self.minimum_vote_capacity.to_le_bytes());
         output.extend_from_slice(&self.requested_amount.to_le_bytes());
         output.extend_from_slice(&self.receiver_lock_hash);
+        output.extend_from_slice(&self.proposer_lock_hash);
         output.extend_from_slice(&self.proposal_config_type_hash);
         output.extend_from_slice(&self.metadata_hash);
         output
@@ -369,7 +395,7 @@ impl TallyState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResultData {
-    pub passed: bool,
+    pub outcome: ProposalOutcome,
     pub proposal_id: Hash,
     pub requested_amount: u64,
     pub receiver_lock_hash: Hash,
@@ -377,6 +403,7 @@ pub struct ResultData {
     pub no: u128,
     pub final_state_hash: Hash,
     pub proposal_config_data_hash: Hash,
+    pub veto_reason_hash: Hash,
 }
 
 impl ResultData {
@@ -386,13 +413,8 @@ impl ResultData {
         }
         let mut reader = Reader::new(data);
         reader.version()?;
-        let passed = match reader.u8()? {
-            0 => false,
-            1 => true,
-            _ => return Err(CodecError::InvalidValue),
-        };
         let value = Self {
-            passed,
+            outcome: ProposalOutcome::try_from(reader.u8()?)?,
             proposal_id: reader.hash()?,
             requested_amount: reader.u64()?,
             receiver_lock_hash: reader.hash()?,
@@ -400,15 +422,28 @@ impl ResultData {
             no: reader.u128()?,
             final_state_hash: reader.hash()?,
             proposal_config_data_hash: reader.hash()?,
+            veto_reason_hash: reader.hash()?,
         };
         reader.finish()?;
+        let zero_tally = value.yes == 0 && value.no == 0 && value.final_state_hash == [0; 32];
+        match value.outcome {
+            ProposalOutcome::Vetoed if !zero_tally || value.veto_reason_hash == [0; 32] => {
+                return Err(CodecError::InvalidValue);
+            }
+            ProposalOutcome::Passed | ProposalOutcome::RejectedByVote
+                if value.veto_reason_hash != [0; 32] =>
+            {
+                return Err(CodecError::InvalidValue);
+            }
+            _ => {}
+        }
         Ok(value)
     }
 
     pub fn encode(&self) -> Vec<u8> {
         let mut output = Vec::with_capacity(RESULT_DATA_LEN);
         output.push(VERSION);
-        output.push(u8::from(self.passed));
+        output.push(self.outcome as u8);
         output.extend_from_slice(&self.proposal_id);
         output.extend_from_slice(&self.requested_amount.to_le_bytes());
         output.extend_from_slice(&self.receiver_lock_hash);
@@ -416,7 +451,16 @@ impl ResultData {
         output.extend_from_slice(&self.no.to_le_bytes());
         output.extend_from_slice(&self.final_state_hash);
         output.extend_from_slice(&self.proposal_config_data_hash);
+        output.extend_from_slice(&self.veto_reason_hash);
         output
+    }
+
+    pub fn is_passed(&self) -> bool {
+        self.outcome == ProposalOutcome::Passed
+    }
+
+    pub fn is_vetoed(&self) -> bool {
+        self.outcome == ProposalOutcome::Vetoed
     }
 }
 
@@ -428,6 +472,9 @@ pub struct ProposalConfig {
     pub minimum_challenge_period: u64,
     pub minimum_tally_bond: u64,
     pub treasury_lock_hash: Hash,
+    pub proposal_lock_hash: Hash,
+    pub guardian_lock_hash: Hash,
+    pub proposal_bond_burn_lock_hash: Hash,
     pub dao_code_hash: Hash,
     pub dao_hash_type: u8,
     pub proposal_code_hash: Hash,
@@ -454,6 +501,9 @@ impl ProposalConfig {
             minimum_challenge_period: reader.u64()?,
             minimum_tally_bond: reader.u64()?,
             treasury_lock_hash: reader.hash()?,
+            proposal_lock_hash: reader.hash()?,
+            guardian_lock_hash: reader.hash()?,
+            proposal_bond_burn_lock_hash: reader.hash()?,
             dao_code_hash: reader.hash()?,
             dao_hash_type: reader.u8()?,
             proposal_code_hash: reader.hash()?,
@@ -473,6 +523,12 @@ impl ProposalConfig {
             || value.minimum_challenge_period == 0
             || value.minimum_tally_bond == 0
             || value.treasury_lock_hash == [0; 32]
+            || value.proposal_lock_hash == [0; 32]
+            || value.guardian_lock_hash == [0; 32]
+            || value.proposal_bond_burn_lock_hash == [0; 32]
+            || value.proposal_lock_hash == value.guardian_lock_hash
+            || value.proposal_lock_hash == value.proposal_bond_burn_lock_hash
+            || value.guardian_lock_hash == value.proposal_bond_burn_lock_hash
             || value.dao_code_hash == [0; 32]
             || value.proposal_code_hash == [0; 32]
             || value.vote_code_hash == [0; 32]
@@ -498,6 +554,9 @@ impl ProposalConfig {
         output.extend_from_slice(&self.minimum_challenge_period.to_le_bytes());
         output.extend_from_slice(&self.minimum_tally_bond.to_le_bytes());
         output.extend_from_slice(&self.treasury_lock_hash);
+        output.extend_from_slice(&self.proposal_lock_hash);
+        output.extend_from_slice(&self.guardian_lock_hash);
+        output.extend_from_slice(&self.proposal_bond_burn_lock_hash);
         output.extend_from_slice(&self.dao_code_hash);
         output.push(self.dao_hash_type);
         output.extend_from_slice(&self.proposal_code_hash);
@@ -872,6 +931,7 @@ pub enum TallyWitness {
         event_proof: Vec<u8>,
     },
     Finalize,
+    CleanupVetoed,
 }
 
 impl TallyWitness {
@@ -885,6 +945,7 @@ impl TallyWitness {
                 event_proof: reader.length_prefixed_bytes()?,
             },
             TALLY_ACTION_FINALIZE => Self::Finalize,
+            TALLY_ACTION_CLEANUP_VETOED => Self::CleanupVetoed,
             _ => return Err(CodecError::InvalidValue),
         };
         reader.finish()?;
@@ -908,6 +969,7 @@ impl TallyWitness {
                 encode_length_prefixed(event_proof, &mut output)?;
             }
             Self::Finalize => output.push(TALLY_ACTION_FINALIZE),
+            Self::CleanupVetoed => output.push(TALLY_ACTION_CLEANUP_VETOED),
         }
         Ok(output)
     }
@@ -1215,6 +1277,7 @@ mod tests {
             minimum_vote_capacity: 1,
             requested_amount: 1000,
             receiver_lock_hash: [1; 32],
+            proposer_lock_hash: [4; 32],
             proposal_config_type_hash: [6; 32],
             metadata_hash: [5; 32],
         };
@@ -1244,6 +1307,9 @@ mod tests {
             minimum_challenge_period: 5,
             minimum_tally_bond: 5_000,
             treasury_lock_hash: [6; 32],
+            proposal_lock_hash: [7; 32],
+            guardian_lock_hash: [15; 32],
+            proposal_bond_burn_lock_hash: [16; 32],
             dao_code_hash: [9; 32],
             dao_hash_type: 1,
             proposal_code_hash: [10; 32],
@@ -1257,6 +1323,33 @@ mod tests {
         };
         assert_eq!(policy.encode().len(), PROPOSAL_CONFIG_LEN);
         assert_eq!(ProposalConfig::decode(&policy.encode()).unwrap(), policy);
+
+        let vetoed = ResultData {
+            outcome: ProposalOutcome::Vetoed,
+            proposal_id: [1; 32],
+            requested_amount: 1_000,
+            receiver_lock_hash: [2; 32],
+            yes: 0,
+            no: 0,
+            final_state_hash: [0; 32],
+            proposal_config_data_hash: [3; 32],
+            veto_reason_hash: [4; 32],
+        };
+        assert_eq!(vetoed.encode().len(), RESULT_DATA_LEN);
+        assert_eq!(ResultData::decode(&vetoed.encode()).unwrap(), vetoed);
+
+        let mut malformed_veto = vetoed.clone();
+        malformed_veto.yes = 1;
+        assert_eq!(
+            ResultData::decode(&malformed_veto.encode()),
+            Err(CodecError::InvalidValue)
+        );
+        let mut unexplained_veto = vetoed.clone();
+        unexplained_veto.veto_reason_hash = [0; 32];
+        assert_eq!(
+            ResultData::decode(&unexplained_veto.encode()),
+            Err(CodecError::InvalidValue)
+        );
 
         let treasury = TreasuryConfig {
             burn_expiry_blocks: 100,
@@ -1288,6 +1381,7 @@ mod tests {
             minimum_vote_capacity: 1,
             requested_amount: 1000,
             receiver_lock_hash: [1; 32],
+            proposer_lock_hash: [4; 32],
             proposal_config_type_hash: [6; 32],
             metadata_hash: [5; 32],
         };
@@ -1304,6 +1398,9 @@ mod tests {
             minimum_challenge_period: 5,
             minimum_tally_bond: 5_000,
             treasury_lock_hash: [6; 32],
+            proposal_lock_hash: [7; 32],
+            guardian_lock_hash: [15; 32],
+            proposal_bond_burn_lock_hash: [16; 32],
             dao_code_hash: [9; 32],
             dao_hash_type: 1,
             proposal_code_hash: [10; 32],
@@ -1361,6 +1458,9 @@ mod tests {
             minimum_challenge_period: 5,
             minimum_tally_bond: 5_000,
             treasury_lock_hash: [9; 32],
+            proposal_lock_hash: [7; 32],
+            guardian_lock_hash: [15; 32],
+            proposal_bond_burn_lock_hash: [16; 32],
             dao_code_hash: [8; 32],
             dao_hash_type: 1,
             proposal_code_hash: [10; 32],
@@ -1496,10 +1596,15 @@ mod tests {
     }
 
     #[test]
-    fn tally_witness_uses_explicit_v6_encoding() {
+    fn tally_witness_uses_explicit_v7_encoding() {
         let encoded = TallyWitness::Finalize.encode().unwrap();
         assert_eq!(encoded[0], TALLY_WITNESS_VERSION);
         assert_eq!(TallyWitness::decode(&encoded), Ok(TallyWitness::Finalize));
+        let cleanup = TallyWitness::CleanupVetoed.encode().unwrap();
+        assert_eq!(
+            TallyWitness::decode(&cleanup),
+            Ok(TallyWitness::CleanupVetoed)
+        );
 
         let mut legacy = encoded;
         legacy[0] = VERSION;

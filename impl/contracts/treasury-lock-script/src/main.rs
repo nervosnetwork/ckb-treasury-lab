@@ -128,7 +128,7 @@ fn payout(config: TreasuryConfig) -> Result<(), Error> {
         if type_hash == Some(config.result_type_hash) {
             let data = load_cell_data(index, Source::Input).map_err(|_| Error::ResultInvalid)?;
             let parsed = ResultData::decode(&data).map_err(|_| Error::ResultInvalid)?;
-            if !parsed.passed || result.replace(parsed).is_some() {
+            if !parsed.is_passed() || result.replace(parsed).is_some() {
                 return Err(Error::ResultInvalid);
             }
         }

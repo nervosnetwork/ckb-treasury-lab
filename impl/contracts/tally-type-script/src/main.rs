@@ -19,8 +19,8 @@ use ckb_std::{
 use treasury_common::{
     BatchWitness, EVENT_PRESENT, EVENT_STATE_NAMESPACE, Hash, LeafTransition, OutPoint,
     ProposalConfig, ProposalData, ProposalPhase, ProvenBlock, ProvenTransaction, ProvenVote,
-    TallyPhase, TallyState, TallyWitness, VOTE_STATE_NAMESPACE, VoteData, VoteRecord,
-    cbmt_multi_root, namespaced_state_key, transactions_root, verify_smt_transition,
+    ResultData, TallyPhase, TallyState, TallyWitness, VOTE_STATE_NAMESPACE, VoteData, VoteRecord,
+    blake2b_256, cbmt_multi_root, namespaced_state_key, transactions_root, verify_smt_transition,
 };
 
 const ZERO: Hash = [0; 32];
@@ -53,6 +53,7 @@ enum Error {
     ContractIdentityMismatch,
     TallyLockInvalid,
     BondTooSmall,
+    VetoedResultInvalid,
 }
 
 pub fn program_entry() -> i8 {
@@ -134,6 +135,9 @@ fn advance() -> Result<(), Error> {
 
 fn consume() -> Result<(), Error> {
     let state = load_state(0, Source::GroupInput)?;
+    if is_cleanup_vetoed_witness()? {
+        return cleanup_vetoed(&state);
+    }
     if state.phase != TallyPhase::Candidate {
         return Err(Error::InvalidTransition);
     }
@@ -153,8 +157,14 @@ fn consume() -> Result<(), Error> {
             ensure_tally_identity(&config)?;
             finalize(&state, &proposal)
         }
-        TallyWitness::Advance(_) => Err(Error::WitnessInvalid),
+        TallyWitness::Advance(_) | TallyWitness::CleanupVetoed => Err(Error::WitnessInvalid),
     }
+}
+
+fn cleanup_vetoed(state: &TallyState) -> Result<(), Error> {
+    let config = load_vetoed_result_dep(state.proposal_id)?;
+    ensure_tally_identity(&config)?;
+    pay_bond(state.operator_lock_hash)
 }
 
 fn verify_batch(
@@ -714,13 +724,56 @@ fn load_proposal(
 }
 
 fn load_proposal_config(config_type_hash: Hash) -> Result<ProposalConfig, Error> {
+    load_proposal_config_with_data(config_type_hash).map(|(config, _)| config)
+}
+
+fn load_proposal_config_with_data(
+    config_type_hash: Hash,
+) -> Result<(ProposalConfig, alloc::vec::Vec<u8>), Error> {
     for (index, type_hash) in QueryIter::new(load_cell_type_hash, Source::CellDep).enumerate() {
         if type_hash == Some(config_type_hash) {
             let data = load_cell_data(index, Source::CellDep).map_err(|_| Error::ConfigInvalid)?;
-            return ProposalConfig::decode(&data).map_err(|_| Error::ConfigInvalid);
+            let config = ProposalConfig::decode(&data).map_err(|_| Error::ConfigInvalid)?;
+            return Ok((config, data));
         }
     }
     Err(Error::ConfigNotFound)
+}
+
+fn load_vetoed_result_dep(proposal_id: Hash) -> Result<ProposalConfig, Error> {
+    let mut found = None;
+    for (index, type_script) in QueryIter::new(load_cell_type, Source::CellDep).enumerate() {
+        let Some(type_script) = type_script else {
+            continue;
+        };
+        let data =
+            load_cell_data(index, Source::CellDep).map_err(|_| Error::VetoedResultInvalid)?;
+        let Ok(result) = ResultData::decode(&data) else {
+            continue;
+        };
+        if result.proposal_id != proposal_id || !result.is_vetoed() {
+            continue;
+        }
+        let config_type_hash: Hash = type_script
+            .args()
+            .raw_data()
+            .as_ref()
+            .try_into()
+            .map_err(|_| Error::VetoedResultInvalid)?;
+        let (config, config_data) = load_proposal_config_with_data(config_type_hash)?;
+        if type_script.calc_script_hash().as_slice() != config.policy_type_hash
+            || result.proposal_config_data_hash != blake2b_256(&config_data)
+            || load_cell_lock_hash(index, Source::CellDep)
+                .map_err(|_| Error::VetoedResultInvalid)?
+                != config.proposal_bond_burn_lock_hash
+        {
+            return Err(Error::VetoedResultInvalid);
+        }
+        if found.replace(config).is_some() {
+            return Err(Error::VetoedResultInvalid);
+        }
+    }
+    found.ok_or(Error::VetoedResultInvalid)
 }
 
 fn ensure_tally_identity(config: &ProposalConfig) -> Result<(), Error> {
@@ -746,6 +799,22 @@ fn load_tally_witness(max_len: usize) -> Result<TallyWitness, Error> {
         return Err(Error::BatchLimit);
     }
     TallyWitness::decode(&input_type).map_err(|_| Error::WitnessInvalid)
+}
+
+fn is_cleanup_vetoed_witness() -> Result<bool, Error> {
+    let witness = load_witness_args(0, Source::GroupInput).map_err(|_| Error::WitnessInvalid)?;
+    let input_type = witness
+        .input_type()
+        .to_opt()
+        .ok_or(Error::WitnessInvalid)?
+        .raw_data();
+    if input_type.len() != 2 {
+        return Ok(false);
+    }
+    Ok(matches!(
+        TallyWitness::decode(&input_type),
+        Ok(TallyWitness::CleanupVetoed)
+    ))
 }
 
 fn latest_header_number() -> Result<u64, Error> {
