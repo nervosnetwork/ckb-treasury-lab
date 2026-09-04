@@ -80,8 +80,11 @@ fn create() -> Result<(), Error> {
     if proposal.requested_amount > config.maximum_proposal_amount {
         return Err(Error::RequestedAmountTooLarge);
     }
+    let required_bond = config
+        .required_proposal_bond(proposal.requested_amount)
+        .ok_or(Error::ProposalBondTooSmall)?;
     if load_cell_capacity(0, Source::GroupOutput).map_err(|_| Error::ProposalBondTooSmall)?
-        < config.minimum_proposal_bond
+        < required_bond
     {
         return Err(Error::ProposalBondTooSmall);
     }
@@ -131,10 +134,8 @@ fn finalize_yes(
 ) -> Result<(), Error> {
     require_input_lock(input.proposer_lock_hash, Error::ProposerMissing)?;
     let proposal_id = load_script_hash().map_err(|_| Error::InvalidTransition)?;
-    let (yes, vote_count, owner_lock) = aggregate_counting_inputs(config, proposal_id, 1)?;
-    if owner_lock != input.proposer_lock_hash {
-        return Err(Error::CountingOwnersInvalid);
-    }
+    let (yes, vote_count) =
+        aggregate_counting_inputs(config, proposal_id, 1, Some(input.proposer_lock_hash), None)?;
     if output.certified_yes_amount != yes || output.certified_yes_vote_count != vote_count {
         return Err(Error::ResultMismatch);
     }
@@ -262,17 +263,14 @@ fn settle_challenge(
     result_index: usize,
     claimed_no: u128,
 ) -> Result<(), Error> {
-    let (no, _, challenger_lock) = aggregate_counting_inputs(config, proposal_id, 0)?;
+    let challenger_lock =
+        load_cell_lock_hash(result_index, Source::Output).map_err(|_| Error::ResultLockInvalid)?;
+    let (no, _) = aggregate_counting_inputs(config, proposal_id, 0, None, Some(challenger_lock))?;
     if no != claimed_no {
         return Err(Error::ResultMismatch);
     }
     if config.passes(proposal.certified_yes_amount, no, proposal.requested_amount) {
         return Err(Error::ChallengeRuleNotMet);
-    }
-    if load_cell_lock_hash(result_index, Source::Output).map_err(|_| Error::ResultLockInvalid)?
-        != challenger_lock
-    {
-        return Err(Error::ResultLockInvalid);
     }
     Ok(())
 }
@@ -291,12 +289,14 @@ fn aggregate_counting_inputs(
     config: &CountingConfig,
     proposal_id: Hash,
     direction: u8,
-) -> Result<(u128, u64, Hash), Error> {
+    required_owner: Option<Hash>,
+    authenticated_owner: Option<Hash>,
+) -> Result<(u128, u64), Error> {
     let mut found = false;
     let mut previous_end = None;
     let mut amount = 0u128;
     let mut vote_count = 0u64;
-    let mut owner_lock = None;
+    let mut owner_authenticated = authenticated_owner.is_none();
     for (index, type_script) in QueryIter::new(load_cell_type, Source::Input).enumerate() {
         let Some(type_script) = type_script else {
             continue;
@@ -316,10 +316,12 @@ fn aggregate_counting_inputs(
         }
         let current_owner =
             load_cell_lock_hash(index, Source::Input).map_err(|_| Error::CountingCellInvalid)?;
-        if owner_lock.is_some_and(|owner| owner != current_owner) {
+        if required_owner.is_some_and(|owner| owner != current_owner) {
             return Err(Error::CountingOwnersInvalid);
         }
-        owner_lock = Some(current_owner);
+        if authenticated_owner == Some(current_owner) {
+            owner_authenticated = true;
+        }
         if previous_end.is_some_and(|end| counting.range_start <= end) {
             return Err(Error::CountingRangesInvalid);
         }
@@ -332,14 +334,10 @@ fn aggregate_counting_inputs(
             .ok_or(Error::CountingAmountOverflow)?;
         found = true;
     }
-    if !found {
+    if !found || !owner_authenticated {
         return Err(Error::CountingCellInvalid);
     }
-    Ok((
-        amount,
-        vote_count,
-        owner_lock.ok_or(Error::CountingCellInvalid)?,
-    ))
+    Ok((amount, vote_count))
 }
 
 fn has_counting_inputs(config: &CountingConfig) -> bool {

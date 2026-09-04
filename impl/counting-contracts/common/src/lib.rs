@@ -5,11 +5,11 @@ extern crate alloc;
 use alloc::vec::Vec;
 use ckb_hash::new_blake2b;
 
-pub const VERSION: u8 = 3;
+pub const VERSION: u8 = 4;
 pub const RESULT_VERSION: u8 = 2;
 pub const PROPOSAL_DATA_LEN: usize = 194;
-pub const COUNTING_CELL_DATA_LEN: usize = 24;
-pub const COUNTING_CONFIG_LEN: usize = 339;
+pub const COUNTING_CELL_DATA_LEN: usize = 86;
+pub const COUNTING_CONFIG_LEN: usize = 341;
 pub const RESULT_DATA_LEN: usize = 202;
 
 pub type Hash = [u8; 32];
@@ -318,8 +318,8 @@ impl ProposalData {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CountingCellData {
     pub direction: u8,
-    pub range_start: u8,
-    pub range_end: u8,
+    pub range_start: Hash,
+    pub range_end: Hash,
     pub amount: u128,
     pub vote_count: u32,
 }
@@ -333,8 +333,8 @@ impl CountingCellData {
         reader.version(VERSION)?;
         let value = Self {
             direction: reader.u8()?,
-            range_start: reader.u8()?,
-            range_end: reader.u8()?,
+            range_start: reader.hash()?,
+            range_end: reader.hash()?,
             amount: reader.u128()?,
             vote_count: reader.u32()?,
         };
@@ -353,8 +353,8 @@ impl CountingCellData {
         let mut output = Vec::with_capacity(COUNTING_CELL_DATA_LEN);
         output.push(VERSION);
         output.push(self.direction);
-        output.push(self.range_start);
-        output.push(self.range_end);
+        output.extend_from_slice(&self.range_start);
+        output.extend_from_slice(&self.range_end);
         output.extend_from_slice(&self.amount.to_le_bytes());
         output.extend_from_slice(&self.vote_count.to_le_bytes());
         Self::decode(&output)?;
@@ -362,7 +362,7 @@ impl CountingCellData {
     }
 
     pub fn contains_lock_hash(&self, lock_hash: &Hash) -> bool {
-        self.range_start <= lock_hash[0] && lock_hash[0] <= self.range_end
+        self.range_start <= *lock_hash && *lock_hash <= self.range_end
     }
 }
 
@@ -374,6 +374,7 @@ pub struct CountingConfig {
     pub minimum_challenge_period: u64,
     pub max_votes_per_counting_cell: u32,
     pub minimum_proposal_bond: u64,
+    pub proposal_bond_rate_bps: u16,
     pub treasury_lock_hash: Hash,
     pub proposal_lock_hash: Hash,
     pub guardian_lock_hash: Hash,
@@ -403,6 +404,7 @@ impl CountingConfig {
             minimum_challenge_period: reader.u64()?,
             max_votes_per_counting_cell: reader.u32()?,
             minimum_proposal_bond: reader.u64()?,
+            proposal_bond_rate_bps: reader.u16()?,
             treasury_lock_hash: reader.hash()?,
             proposal_lock_hash: reader.hash()?,
             guardian_lock_hash: reader.hash()?,
@@ -425,6 +427,8 @@ impl CountingConfig {
             || value.minimum_challenge_period == 0
             || value.max_votes_per_counting_cell == 0
             || value.minimum_proposal_bond == 0
+            || value.proposal_bond_rate_bps == 0
+            || value.proposal_bond_rate_bps > 10_000
             || value.treasury_lock_hash == [0; 32]
             || value.proposal_lock_hash == [0; 32]
             || value.guardian_lock_hash == [0; 32]
@@ -453,6 +457,7 @@ impl CountingConfig {
         output.extend_from_slice(&self.minimum_challenge_period.to_le_bytes());
         output.extend_from_slice(&self.max_votes_per_counting_cell.to_le_bytes());
         output.extend_from_slice(&self.minimum_proposal_bond.to_le_bytes());
+        output.extend_from_slice(&self.proposal_bond_rate_bps.to_le_bytes());
         output.extend_from_slice(&self.treasury_lock_hash);
         output.extend_from_slice(&self.proposal_lock_hash);
         output.extend_from_slice(&self.guardian_lock_hash);
@@ -483,6 +488,14 @@ impl CountingConfig {
         requested_amount <= self.maximum_proposal_amount
             && yes >= self.minimum_yes_amount
             && weighted_yes > threshold
+    }
+
+    pub fn required_proposal_bond(&self, requested_amount: u64) -> Option<u64> {
+        let numerator =
+            (requested_amount as u128).checked_mul(self.proposal_bond_rate_bps as u128)?;
+        let scaled = numerator.checked_add(9_999)?.checked_div(10_000)?;
+        let scaled: u64 = scaled.try_into().ok()?;
+        Some(self.minimum_proposal_bond.max(scaled))
     }
 }
 
@@ -571,6 +584,7 @@ mod tests {
             minimum_challenge_period: 5,
             max_votes_per_counting_cell: 1_000,
             minimum_proposal_bond: 100,
+            proposal_bond_rate_bps: 1_000,
             treasury_lock_hash: [1; 32],
             proposal_lock_hash: [2; 32],
             guardian_lock_hash: [3; 32],
@@ -611,8 +625,8 @@ mod tests {
 
         let counting = CountingCellData {
             direction: 1,
-            range_start: 0x20,
-            range_end: 0x3f,
+            range_start: [0x20; 32],
+            range_end: [0x3f; 32],
             amount: 42,
             vote_count: 2,
         };
@@ -679,5 +693,14 @@ mod tests {
         assert!(!config.passes(600, 400, 1_000));
         assert!(!config.passes(99, 0, 1_000));
         assert!(!config.passes(60, 40, 1_001));
+    }
+
+    #[test]
+    fn proposal_bond_scales_with_the_requested_amount() {
+        let mut config = config();
+        config.minimum_proposal_bond = 100;
+        config.proposal_bond_rate_bps = 2_500;
+        assert_eq!(config.required_proposal_bond(200), Some(100));
+        assert_eq!(config.required_proposal_bond(1_001), Some(251));
     }
 }

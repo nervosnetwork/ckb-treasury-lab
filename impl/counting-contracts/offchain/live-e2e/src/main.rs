@@ -316,6 +316,7 @@ fn run() -> AnyResult<()> {
         minimum_challenge_period: 5,
         max_votes_per_counting_cell: 1_000,
         minimum_proposal_bond: 1_500 * CKB,
+        proposal_bond_rate_bps: 1_000,
         treasury_lock_hash: packed_hash(&treasury_lock.calc_script_hash()),
         proposal_lock_hash: packed_hash(&proposal_lock.calc_script_hash()),
         guardian_lock_hash: packed_hash(&guardian_lock.calc_script_hash()),
@@ -568,8 +569,8 @@ fn run() -> AnyResult<()> {
     let yes_lock_hash = packed_hash(&yes_voter_lock.calc_script_hash());
     let yes_count = CountingCellData {
         direction: 1,
-        range_start: yes_lock_hash[0],
-        range_end: yes_lock_hash[0],
+        range_start: yes_lock_hash,
+        range_end: yes_lock_hash,
         amount: 1_000 * CKB as u128,
         vote_count: 1,
     };
@@ -639,8 +640,8 @@ fn run() -> AnyResult<()> {
     let no_lock_hash = packed_hash(&no_voter_lock.calc_script_hash());
     let no_count = CountingCellData {
         direction: 0,
-        range_start: no_lock_hash[0],
-        range_end: no_lock_hash[0],
+        range_start: no_lock_hash,
+        range_end: no_lock_hash,
         amount: 800 * CKB as u128,
         vote_count: 1,
     };
@@ -982,8 +983,8 @@ fn run_passed_payout(
     let voter_lock_hash = packed_hash(&yes_voter_lock.calc_script_hash());
     let counting = CountingCellData {
         direction: 1,
-        range_start: voter_lock_hash[0],
-        range_end: voter_lock_hash[0],
+        range_start: voter_lock_hash,
+        range_end: voter_lock_hash,
         amount: capacity(&dao_funding.output) as u128,
         vote_count: 1,
     };

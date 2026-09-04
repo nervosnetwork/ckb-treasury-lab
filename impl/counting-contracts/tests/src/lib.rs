@@ -87,7 +87,8 @@ impl Fixture {
             maximum_proposal_amount: 1_000 * CKB,
             minimum_challenge_period: 5,
             max_votes_per_counting_cell: 1_000,
-            minimum_proposal_bond: 1_000 * CKB,
+            minimum_proposal_bond: 100 * CKB,
+            proposal_bond_rate_bps: 5_000,
             treasury_lock_hash: script_hash(&treasury_lock),
             proposal_lock_hash: script_hash(&owner_lock),
             guardian_lock_hash: script_hash(&guardian_lock),
@@ -241,6 +242,10 @@ fn proposal_creation_requires_the_configured_bond() {
         .args(Bytes::from(type_id(&funding_input, 0).to_vec()).pack())
         .build();
     let proposal = fixture.proposal(ProposalPhase::Open, 0, 0);
+    let required_bond = fixture
+        .config
+        .required_proposal_bond(proposal.requested_amount)
+        .unwrap();
     let config_dep = fixture.config_dep();
     let proposal_lock = fixture.owner_lock.clone();
     let build = |capacity| {
@@ -258,9 +263,7 @@ fn proposal_creation_requires_the_configured_bond() {
             .build()
     };
 
-    let too_small = fixture
-        .context
-        .complete_tx(build(fixture.config.minimum_proposal_bond - 1));
+    let too_small = fixture.context.complete_tx(build(required_bond - 1));
     assert!(
         fixture
             .context
@@ -268,9 +271,7 @@ fn proposal_creation_requires_the_configured_bond() {
             .is_err()
     );
 
-    let valid = fixture
-        .context
-        .complete_tx(build(fixture.config.minimum_proposal_bond));
+    let valid = fixture.context.complete_tx(build(required_bond));
     fixture.context.verify_tx(&valid, VERIFY_CYCLES).unwrap();
 }
 
@@ -389,8 +390,8 @@ fn counting_cell_recomputes_amount_and_rejects_duplicate_voter_locks() {
             vote_cell
         })
         .collect::<Vec<_>>();
-    let first = script_hash(&votes[0].0)[0];
-    let second = script_hash(&votes[1].0)[0];
+    let first = script_hash(&votes[0].0);
+    let second = script_hash(&votes[1].0);
     let data = CountingCellData {
         direction: 1,
         range_start: first.min(second),
@@ -557,8 +558,8 @@ fn counting_cell_rejects_votes_created_outside_the_proposal_window() {
         let lock_hash = script_hash(&voter_lock);
         let data = CountingCellData {
             direction: 1,
-            range_start: lock_hash[0],
-            range_end: lock_hash[0],
+            range_start: lock_hash,
+            range_end: lock_hash,
             amount: vote.amount as u128,
             vote_count: 1,
         };
@@ -586,15 +587,15 @@ fn proposal_finalization_aggregates_only_non_overlapping_yes_ranges() {
     let proposal_cell = fixture.proposal_cell(&closed);
     let left = fixture.counting_cell(CountingCellData {
         direction: 1,
-        range_start: 0,
-        range_end: 100,
+        range_start: [0; 32],
+        range_end: [100; 32],
         amount: 400 * CKB as u128,
         vote_count: 4,
     });
     let right = fixture.counting_cell(CountingCellData {
         direction: 1,
-        range_start: 101,
-        range_end: 255,
+        range_start: [101; 32],
+        range_end: [255; 32],
         amount: 300 * CKB as u128,
         vote_count: 3,
     });
@@ -604,8 +605,8 @@ fn proposal_finalization_aggregates_only_non_overlapping_yes_ranges() {
     finalized.certified_yes_vote_count = 7;
     let overlap = fixture.counting_cell(CountingCellData {
         direction: 1,
-        range_start: 100,
-        range_end: 255,
+        range_start: [100; 32],
+        range_end: [255; 32],
         amount: 300 * CKB as u128,
         vote_count: 3,
     });
@@ -650,8 +651,8 @@ fn proposal_finalization_aggregates_only_non_overlapping_yes_ranges() {
         Bytes::from(
             CountingCellData {
                 direction: 1,
-                range_start: 0,
-                range_end: 100,
+                range_start: [0; 32],
+                range_end: [100; 32],
                 amount: 400 * CKB as u128,
                 vote_count: 4,
             }
@@ -668,8 +669,8 @@ fn proposal_finalization_aggregates_only_non_overlapping_yes_ranges() {
         Bytes::from(
             CountingCellData {
                 direction: 1,
-                range_start: 101,
-                range_end: 255,
+                range_start: [101; 32],
+                range_end: [255; 32],
                 amount: 300 * CKB as u128,
                 vote_count: 3,
             }
@@ -701,8 +702,8 @@ fn no_counting_cells_can_challenge_a_finalized_candidate() {
     let proposal_cell = fixture.proposal_cell(&finalized);
     let no_cell = fixture.counting_cell(CountingCellData {
         direction: 0,
-        range_start: 0,
-        range_end: 255,
+        range_start: [0; 32],
+        range_end: [255; 32],
         amount: 400 * CKB as u128,
         vote_count: 4,
     });
@@ -753,8 +754,8 @@ fn no_counting_cells_can_challenge_a_finalized_candidate() {
         Bytes::from(
             CountingCellData {
                 direction: 0,
-                range_start: 0,
-                range_end: 127,
+                range_start: [0; 32],
+                range_end: [127; 32],
                 amount: 200 * CKB as u128,
                 vote_count: 2,
             }
@@ -771,8 +772,8 @@ fn no_counting_cells_can_challenge_a_finalized_candidate() {
         Bytes::from(
             CountingCellData {
                 direction: 0,
-                range_start: 128,
-                range_end: 255,
+                range_start: [128; 32],
+                range_end: [255; 32],
                 amount: 200 * CKB as u128,
                 vote_count: 2,
             }
@@ -780,7 +781,7 @@ fn no_counting_cells_can_challenge_a_finalized_candidate() {
             .unwrap(),
         ),
     );
-    let mixed_challengers = TransactionBuilder::default()
+    let cooperative_challengers = TransactionBuilder::default()
         .cell_dep(config_dep.clone())
         .input(input(proposal_cell.clone()))
         .input(input(left_no))
@@ -801,13 +802,11 @@ fn no_counting_cells_can_challenge_a_finalized_candidate() {
         )
         .output_data(Bytes::new().pack())
         .build();
-    let mixed_challengers = fixture.context.complete_tx(mixed_challengers);
-    assert!(
-        fixture
-            .context
-            .verify_tx(&mixed_challengers, VERIFY_CYCLES)
-            .is_err()
-    );
+    let cooperative_challengers = fixture.context.complete_tx(cooperative_challengers);
+    fixture
+        .context
+        .verify_tx(&cooperative_challengers, VERIFY_CYCLES)
+        .unwrap();
 
     let redirected = fixture
         .context
@@ -819,16 +818,14 @@ fn no_counting_cells_can_challenge_a_finalized_candidate() {
             .is_err()
     );
 
-    let reduced = fixture.context.complete_tx(build(
-        fixture.config.minimum_proposal_bond - 1,
-        fixture.challenger_lock.clone(),
-    ));
+    let reduced = fixture
+        .context
+        .complete_tx(build(1_000 * CKB - 1, fixture.challenger_lock.clone()));
     assert!(fixture.context.verify_tx(&reduced, VERIFY_CYCLES).is_err());
 
-    let valid = fixture.context.complete_tx(build(
-        fixture.config.minimum_proposal_bond,
-        fixture.challenger_lock.clone(),
-    ));
+    let valid = fixture
+        .context
+        .complete_tx(build(1_000 * CKB, fixture.challenger_lock.clone()));
     fixture.context.verify_tx(&valid, VERIFY_CYCLES).unwrap();
 }
 
@@ -958,8 +955,8 @@ fn closed_proposal_can_expire_and_terminal_receipt_unlocks_event_cells() {
     );
     let counting_cell = fixture.counting_cell(CountingCellData {
         direction: 0,
-        range_start: 0,
-        range_end: 255,
+        range_start: [0; 32],
+        range_end: [255; 32],
         amount: 100 * CKB as u128,
         vote_count: 1,
     });
@@ -1081,8 +1078,8 @@ fn benchmark_counting_batch(vote_count: usize) -> (u64, usize) {
     }
     let data = CountingCellData {
         direction: 1,
-        range_start: votes.first().map_or(0, |(lock, _)| script_hash(lock)[0]),
-        range_end: votes.last().map_or(0, |(lock, _)| script_hash(lock)[0]),
+        range_start: votes.first().map_or([0; 32], |(lock, _)| script_hash(lock)),
+        range_end: votes.last().map_or([0; 32], |(lock, _)| script_hash(lock)),
         amount: vote_count as u128 * 10 * CKB as u128,
         vote_count: vote_count as u32,
     };

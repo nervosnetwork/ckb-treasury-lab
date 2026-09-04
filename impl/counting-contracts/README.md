@@ -44,10 +44,10 @@ flowchart LR
    The Proposal records the certified YES amount and certified vote count.
 4. During the challenge period, a challenger can create NO Counting Cells under
    its own authenticated lock and consume enough non-overlapping NO ranges to
-   prove that the configured passing rule is false. All NO Counting Cells in one
-   challenge must have the same lock. A successful challenge consumes the
-   Proposal and creates a Rejected Result Cell containing the complete Proposal
-   bond under that challenger lock.
+   prove that the configured passing rule is false. Multiple Counting Cell
+   owners may co-sign one challenge, and the Rejected Result must use one of
+   those authenticated owner locks. A successful challenge consumes the
+   Proposal and creates a Rejected Result Cell containing the Proposal bond.
 5. If no successful challenge wins first, the Finalized Proposal can be
    consumed after its relative `since` matures to create a Passed Result Cell.
    The existing Treasury payout path can then consume that Result.
@@ -74,16 +74,12 @@ flowchart LR
 
 ## Hash Ranges
 
-A Counting Cell stores an inclusive range over the first byte of each voter
-lock hash. Vote CellDeps inside the transaction must be ordered by their full
-32-byte lock hash and must be unique. When a Proposal aggregates Counting
-Cells, their ranges must be strictly ordered and non-overlapping.
-
-The off-chain builder never splits one first-byte bucket across two Counting
-Cells. Consequently, a single bucket containing more than
-`max_votes_per_counting_cell` unique locks cannot be represented with the
-configured batch limit and is rejected by the builder. The protocol has at
-most 256 non-overlapping ranges for one direction.
+A Counting Cell stores an inclusive range over the complete 32-byte voter lock
+hash. Vote CellDeps inside the transaction must be ordered by that hash and
+must be unique. The builder sorts all votes and cuts them directly at
+`max_votes_per_counting_cell`; even votes sharing the same first hash byte can
+be split safely. When a Proposal aggregates Counting Cells, their full-hash
+ranges must be strictly ordered and non-overlapping.
 
 ## Security Boundary
 
@@ -99,12 +95,15 @@ included. Finalization is therefore optimistic:
   can win.
 
 The entire capacity of the Proposal Cell is its bond. Creation requires at
-least `minimum_proposal_bond`. Its capacity is preserved through Open, Closed,
-and Finalized states. A payout returns the bond to the Proposal creator minus
-the terminal receipt's exact occupied capacity. A successful vote challenge
-does the same for the unique owner of the consumed NO Counting Cells. Guardian
-veto and Proposal expiry leave the bond under the configured burn lock.
-Transaction fees must come from other inputs.
+least `max(minimum_proposal_bond, ceil(requested_amount *
+proposal_bond_rate_bps / 10_000))`. Its capacity is preserved through Open,
+Closed, and Finalized states. A payout returns the bond to the Proposal creator
+minus the terminal receipt's exact occupied capacity. A successful vote
+challenge does the same for the consumed NO Counting Cell owner selected as
+the Result lock; multiple owners can coordinate and allocate
+their other outputs in the same signed transaction. Guardian veto and Proposal
+expiry leave the bond under the configured burn lock. Transaction fees must
+come from other inputs.
 
 The approval comparison is strict and uses checked integer cross
 multiplication: `yes * 10_000 > (yes + no) * approval_bps`. Consequently, an
@@ -120,6 +119,13 @@ for the decision, not a claim that every YES and NO Vote Cell was counted.
 `YES + NO` quorum. This matches the optimistic construction: the Proposal
 creator proves the YES certificate first, and a challenger may subsequently
 add enough verified NO weight to invalidate the ratio rule.
+
+Vote CellDeps are public, so another operator may independently build the same
+NO certificate and race to challenge. It cannot redirect an already signed
+transaction or spend another owner's Counting Cell without that lock's
+authorization. The first valid challenge consumes the singleton Proposal Cell;
+the scaled Proposal bond is intended to keep that permissionless work
+economically worthwhile.
 
 This design depends on NO Vote Cells remaining available until the result is
 settled and on an interested party submitting a sufficient challenge. Vote and
@@ -159,29 +165,29 @@ TOP=$PWD MODE=release \
   -- --ignored --nocapture
 ```
 
-Measured on 2026-09-03 with release RISC-V contracts:
+Measured on 2026-09-04 with release RISC-V contracts:
 
 | Vote CellDeps | CKB-VM cycles | Transaction size |
 | ---: | ---: | ---: |
-| 1 | 117,069 | 0.500 KB |
-| 10 | 245,022 | 0.833 KB |
-| 100 | 1,524,762 | 4.163 KB |
-| 500 | 7,215,582 | 18.963 KB |
-| 1,000 | 14,331,162 | 37.463 KB |
+| 1 | 113,540 | 0.594 KB |
+| 10 | 236,270 | 0.927 KB |
+| 100 | 1,468,610 | 4.257 KB |
+| 500 | 6,948,185 | 19.057 KB |
+| 1,000 | 13,799,885 | 37.557 KB |
 
 Contract sizes:
 
 | Contract | Stripped size |
 | --- | ---: |
 | Config Type Script | 56.192 KB |
-| Counting Type Script | 60.544 KB |
-| Policy Type Script | 65.520 KB |
-| Proposal Type Script | 76.136 KB |
-| Vote Type Script | 73.272 KB |
+| Counting Type Script | 74.688 KB |
+| Policy Type Script | 66.744 KB |
+| Proposal Type Script | 80.024 KB |
+| Vote Type Script | 86.608 KB |
 
 For context, the current SMT PoC measures 1,000 ideal votes at approximately
 2.080B cycles and 365.728 KB, while this Counting Cell transaction measures
-14.331M cycles and 37.463 KB. This is not an equivalent security comparison:
+13.800M cycles and 37.557 KB. This is not an equivalent security comparison:
 the SMT path commits a state transition and supports historical omission
 proofs, whereas this path verifies only live included Vote Cells and relies on
 an optimistic NO challenge.

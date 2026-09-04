@@ -19,7 +19,6 @@ pub enum BuildError {
     InvalidDirection,
     InvalidVote,
     DuplicateVoterLock,
-    BucketTooLarge,
     AmountOverflow,
 }
 
@@ -59,50 +58,14 @@ impl CountingBuilder {
         }
 
         let mut batches = Vec::new();
-        let mut batch_votes = Vec::new();
-        let mut batch_start = 0u8;
-        let mut batch_end = 0u8;
-        let mut offset = 0usize;
-        while offset < votes.len() {
-            let bucket = votes[offset].lock_hash[0];
-            let bucket_end = votes[offset..]
-                .iter()
-                .position(|vote| vote.lock_hash[0] != bucket)
-                .map_or(votes.len(), |relative| offset + relative);
-            let bucket_len = bucket_end - offset;
-            if bucket_len > self.max_votes_per_cell as usize {
-                return Err(BuildError::BucketTooLarge);
-            }
-            if !batch_votes.is_empty()
-                && batch_votes.len() + bucket_len > self.max_votes_per_cell as usize
-            {
-                batches.push(build_batch(
-                    direction,
-                    batch_start,
-                    batch_end,
-                    core::mem::take(&mut batch_votes),
-                )?);
-            }
-            if batch_votes.is_empty() {
-                batch_start = bucket;
-            }
-            batch_end = bucket;
-            batch_votes.extend_from_slice(&votes[offset..bucket_end]);
-            offset = bucket_end;
-        }
-        if !batch_votes.is_empty() {
-            batches.push(build_batch(direction, batch_start, batch_end, batch_votes)?);
+        for batch_votes in votes.chunks(self.max_votes_per_cell as usize) {
+            batches.push(build_batch(direction, batch_votes.to_vec())?);
         }
         Ok(batches)
     }
 }
 
-fn build_batch(
-    direction: u8,
-    range_start: u8,
-    range_end: u8,
-    vote_cells: Vec<VoteCell>,
-) -> Result<CountingBatch, BuildError> {
+fn build_batch(direction: u8, vote_cells: Vec<VoteCell>) -> Result<CountingBatch, BuildError> {
     let amount = vote_cells.iter().try_fold(0u128, |sum, vote| {
         sum.checked_add(vote.amount as u128)
             .ok_or(BuildError::AmountOverflow)
@@ -114,8 +77,8 @@ fn build_batch(
     Ok(CountingBatch {
         data: CountingCellData {
             direction,
-            range_start,
-            range_end,
+            range_start: vote_cells.first().ok_or(BuildError::InvalidVote)?.lock_hash,
+            range_end: vote_cells.last().ok_or(BuildError::InvalidVote)?.lock_hash,
             amount,
             vote_count,
         },
@@ -142,7 +105,7 @@ mod tests {
     }
 
     #[test]
-    fn builds_sorted_non_overlapping_ranges_without_splitting_a_bucket() {
+    fn builds_sorted_non_overlapping_full_hash_ranges() {
         let builder = CountingBuilder::new(3).unwrap();
         let batches = builder
             .build(
@@ -156,30 +119,26 @@ mod tests {
             )
             .unwrap();
         assert_eq!(batches.len(), 2);
-        assert_eq!(
-            (batches[0].data.range_start, batches[0].data.range_end),
-            (0x10, 0x20)
-        );
+        assert_eq!(batches[0].data.range_start, vote(0x10, 1, 1, 10).lock_hash);
+        assert_eq!(batches[0].data.range_end, vote(0x20, 3, 1, 30).lock_hash);
         assert_eq!(batches[0].data.amount, 60);
         assert_eq!(batches[0].data.vote_count, 3);
-        assert_eq!(
-            (batches[1].data.range_start, batches[1].data.range_end),
-            (0x30, 0x30)
-        );
+        assert_eq!(batches[1].data.range_start, vote(0x30, 4, 1, 40).lock_hash);
+        assert_eq!(batches[1].data.range_end, vote(0x30, 4, 1, 40).lock_hash);
         assert_eq!(batches[1].data.amount, 40);
     }
 
     #[test]
-    fn rejects_duplicate_locks_and_oversized_first_byte_buckets() {
+    fn rejects_duplicate_locks_and_splits_equal_first_bytes() {
         let builder = CountingBuilder::new(1).unwrap();
         let duplicate = vote(1, 2, 1, 10);
         assert_eq!(
             builder.build(1, vec![duplicate.clone(), duplicate]),
             Err(BuildError::DuplicateVoterLock)
         );
-        assert_eq!(
-            builder.build(1, vec![vote(1, 2, 1, 10), vote(1, 3, 1, 20)]),
-            Err(BuildError::BucketTooLarge)
-        );
+        let batches = builder
+            .build(1, vec![vote(1, 2, 1, 10), vote(1, 3, 1, 20)])
+            .unwrap();
+        assert_eq!(batches.len(), 2);
     }
 }
