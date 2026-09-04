@@ -6,10 +6,10 @@ ckb_std::default_alloc!(16384, 1258306, 64);
 
 use ckb_std::{
     ckb_constants::Source,
-    ckb_types::prelude::Entity,
+    ckb_types::prelude::{Entity, Unpack},
     high_level::{
         QueryIter, load_cell_data, load_cell_lock_hash, load_cell_type, load_cell_type_hash,
-        load_script,
+        load_header, load_script,
     },
 };
 use counting_common::{
@@ -35,6 +35,8 @@ enum Error {
     AmountMismatch,
     VoteCountMismatch,
     TooManyVotes,
+    VoteHeaderMissing,
+    VoteOutsideWindow,
     CreatorMissing,
     CountingLockInvalid,
     ProposalTransitionInvalid,
@@ -122,6 +124,14 @@ fn create() -> Result<(), Error> {
             return Err(Error::VoterLocksNotUnique);
         }
         previous_lock_hash = Some(lock_hash);
+        let vote_block: u64 = load_header(index, Source::CellDep)
+            .map_err(|_| Error::VoteHeaderMissing)?
+            .raw()
+            .number()
+            .unpack();
+        if vote_block < proposal.start_block || vote_block > proposal.end_block {
+            return Err(Error::VoteOutsideWindow);
+        }
 
         let vote_data =
             load_cell_data(index, Source::CellDep).map_err(|_| Error::VoteDataInvalid)?;

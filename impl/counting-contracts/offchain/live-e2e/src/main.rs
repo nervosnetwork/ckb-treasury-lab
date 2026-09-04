@@ -573,6 +573,7 @@ fn run() -> AnyResult<()> {
         amount: 1_000 * CKB as u128,
         vote_count: 1,
     };
+    let yes_vote_header = rpc.block_hash(yes_vote.block_number)?;
     let yes_count_commit = rpc.commit(
         "create YES Counting Cell",
         transaction(
@@ -584,7 +585,7 @@ fn run() -> AnyResult<()> {
                 code_dep(&config_cell.out_point),
                 code_dep(&out_point(yes_vote.hash, 0)),
             ],
-            vec![],
+            vec![yes_vote_header],
             vec![output(
                 200 * CKB,
                 &proposer_lock,
@@ -643,6 +644,7 @@ fn run() -> AnyResult<()> {
         amount: 800 * CKB as u128,
         vote_count: 1,
     };
+    let no_vote_header = rpc.block_hash(no_vote.block_number)?;
     let no_count_commit = rpc.commit(
         "create NO Counting Cell",
         transaction(
@@ -654,7 +656,7 @@ fn run() -> AnyResult<()> {
                 code_dep(&config_cell.out_point),
                 code_dep(&out_point(no_vote.hash, 0)),
             ],
-            vec![],
+            vec![no_vote_header],
             vec![output(
                 200 * CKB,
                 &challenger_lock,
@@ -942,6 +944,7 @@ fn run_passed_payout(
         amount: capacity(&dao_funding.output) as u128,
         vote_count: 1,
     };
+    let vote_header = rpc.block_hash(vote_commit.block_number)?;
     let counting_commit = rpc.commit(
         "create Passed Counting Cell",
         transaction(
@@ -953,7 +956,7 @@ fn run_passed_payout(
                 code_dep(&config_cell.out_point),
                 code_dep(&out_point(vote_commit.hash, 0)),
             ],
-            vec![],
+            vec![vote_header],
             vec![output(
                 capacity(&counting_funding.output),
                 proposer_lock,

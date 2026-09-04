@@ -31,7 +31,8 @@ flowchart LR
    Cells. Each transaction requires an input under the Proposal's recorded
    proposer lock and loads live Vote Cells as CellDeps. The Counting Type Script
    checks their Proposal, direction, lock-hash range, lock uniqueness, amount,
-   and count.
+   count, and creation block. Every Vote Cell block header must prove that the
+   vote was committed inside the Proposal's inclusive voting window.
 3. The Proposal creator consumes one or more non-overlapping, proposer-locked
    YES Counting Cells and changes the Proposal from `Closed` to `Finalized`.
    The Proposal records the verified YES amount and vote count.
@@ -104,12 +105,11 @@ settled and on an interested party submitting a sufficient challenge. The PoC
 keeps Vote Cells immutable for that reason. A production design needs an
 explicit terminal cleanup mechanism to avoid permanent live-cell growth.
 
-The Vote Type Script can prove that the referenced Proposal is still `Open`,
-but an ordinary CKB-VM script cannot enforce an upper bound against the block
-currently including the Vote transaction. `end_block` is therefore the earliest
-height at which anyone may close the Proposal. The effective voting deadline is
-the transaction that consumes the Open Proposal Cell; production operation must
-close it promptly at the intended height.
+The Vote Type Script proves that the referenced Proposal is still `Open`, while
+the Counting Type Script loads each Vote Cell's creation header and requires its
+block number to be inside `[start_block, end_block]`. A late Vote transaction may
+still be committed while an Open Proposal Cell exists, but it cannot contribute
+to any valid Counting Cell.
 
 Uniqueness is enforced per voter lock, not per historical DAO outpoint across
 opposite directions. A voter creating both YES and NO Vote Cells with the same

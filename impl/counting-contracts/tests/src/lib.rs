@@ -345,6 +345,11 @@ fn counting_cell_recomputes_amount_and_rejects_duplicate_voter_locks() {
     let mut fixture = Fixture::new();
     let proposal = fixture.proposal(ProposalPhase::Closed, 0, 0);
     let proposal_cell = fixture.proposal_cell(&proposal);
+    let vote_header = HeaderBuilder::default()
+        .number(15u64)
+        .epoch(EpochNumberWithFraction::new(0, 15, 100))
+        .build();
+    fixture.context.insert_header(vote_header.clone());
     let lock_a = fixture
         .context
         .build_script(&fixture.always_success, Bytes::from(vec![0x21]))
@@ -359,7 +364,7 @@ fn counting_cell_recomputes_amount_and_rejects_duplicate_voter_locks() {
         .iter()
         .enumerate()
         .map(|(index, (lock, amount))| {
-            fixture.context.create_cell(
+            let vote_cell = fixture.context.create_cell(
                 CellOutput::new_builder()
                     .capacity(100 * CKB)
                     .lock(lock.clone())
@@ -377,7 +382,11 @@ fn counting_cell_recomputes_amount_and_rejects_duplicate_voter_locks() {
                     .encode()
                     .unwrap(),
                 ),
-            )
+            );
+            fixture
+                .context
+                .link_cell_with_block(vote_cell.clone(), vote_header.hash(), index + 1);
+            vote_cell
         })
         .collect::<Vec<_>>();
     let first = script_hash(&votes[0].0)[0];
@@ -402,6 +411,7 @@ fn counting_cell_recomputes_amount_and_rejects_duplicate_voter_locks() {
         &data,
     )
     .as_advanced_builder()
+    .header_dep(vote_header.hash())
     .input(input(proposer_auth))
     .build();
     let config_dep = fixture.config_dep();
@@ -478,6 +488,9 @@ fn counting_cell_recomputes_amount_and_rejects_duplicate_voter_locks() {
             .unwrap(),
         ),
     );
+    fixture
+        .context
+        .link_cell_with_block(duplicate.clone(), vote_header.hash(), 3);
     let duplicate_data = CountingCellData {
         amount: 700 * CKB as u128,
         vote_count: 2,
@@ -495,6 +508,75 @@ fn counting_cell_recomputes_amount_and_rejects_duplicate_voter_locks() {
             .verify_tx(&duplicate_tx, VERIFY_CYCLES)
             .is_err()
     );
+}
+
+#[test]
+fn counting_cell_rejects_votes_created_outside_the_proposal_window() {
+    let mut fixture = Fixture::new();
+    let proposal = fixture.proposal(ProposalPhase::Closed, 0, 0);
+    let proposal_cell = fixture.proposal_cell(&proposal);
+    for (sequence, block_number) in [9u64, 21].into_iter().enumerate() {
+        let voter_lock = fixture
+            .context
+            .build_script(
+                &fixture.always_success,
+                Bytes::from(vec![block_number as u8]),
+            )
+            .unwrap();
+        let vote = VoteData {
+            direction: 1,
+            amount: 100 * CKB,
+            dao_out_points: vec![CommonOutPoint {
+                tx_hash: [block_number as u8; 32],
+                index: 0,
+            }],
+        };
+        let vote_cell = fixture.context.create_cell(
+            CellOutput::new_builder()
+                .capacity(100 * CKB)
+                .lock(voter_lock.clone())
+                .type_(Some(fixture.vote_type.clone()).pack())
+                .build(),
+            Bytes::from(vote.encode().unwrap()),
+        );
+        let header = HeaderBuilder::default()
+            .number(block_number)
+            .epoch(EpochNumberWithFraction::new(0, block_number, 100))
+            .build();
+        fixture.context.insert_header(header.clone());
+        fixture
+            .context
+            .link_cell_with_block(vote_cell.clone(), header.hash(), sequence + 1);
+        let proposer_auth = fixture.context.create_cell(
+            CellOutput::new_builder()
+                .capacity(200 * CKB)
+                .lock(fixture.proposer_lock.clone())
+                .build(),
+            Bytes::new(),
+        );
+        let lock_hash = script_hash(&voter_lock);
+        let data = CountingCellData {
+            direction: 1,
+            range_start: lock_hash[0],
+            range_end: lock_hash[0],
+            amount: vote.amount as u128,
+            vote_count: 1,
+        };
+        let tx = counting_output(
+            fixture.proposer_lock.clone(),
+            fixture.counting_type.clone(),
+            &data,
+        )
+        .as_advanced_builder()
+        .cell_dep(cell_dep(proposal_cell.clone()))
+        .cell_dep(fixture.config_dep())
+        .cell_dep(cell_dep(vote_cell))
+        .header_dep(header.hash())
+        .input(input(proposer_auth))
+        .build();
+        let tx = fixture.context.complete_tx(tx);
+        assert!(fixture.context.verify_tx(&tx, VERIFY_CYCLES).is_err());
+    }
 }
 
 #[test]
@@ -850,6 +932,11 @@ fn benchmark_counting_batch(vote_count: usize) -> (u64, usize) {
     let mut fixture = Fixture::new();
     let proposal = fixture.proposal(ProposalPhase::Closed, 0, 0);
     let proposal_cell = fixture.proposal_cell(&proposal);
+    let vote_header = HeaderBuilder::default()
+        .number(15u64)
+        .epoch(EpochNumberWithFraction::new(0, 15, 100))
+        .build();
+    fixture.context.insert_header(vote_header.clone());
     let mut votes = (0..vote_count)
         .map(|index| {
             let lock = fixture
@@ -881,6 +968,9 @@ fn benchmark_counting_batch(vote_count: usize) -> (u64, usize) {
                 .build(),
             Bytes::from(vote.encode().unwrap()),
         );
+        fixture
+            .context
+            .link_cell_with_block(vote_cell.clone(), vote_header.hash(), *index + 1);
         vote_deps.push(cell_dep(vote_cell));
     }
     let data = CountingCellData {
@@ -901,6 +991,7 @@ fn benchmark_counting_batch(vote_count: usize) -> (u64, usize) {
         .cell_dep(cell_dep(proposal_cell))
         .cell_dep(fixture.config_dep())
         .cell_deps(vote_deps)
+        .header_dep(vote_header.hash())
         .input(input(proposer_auth))
         .output(
             CellOutput::new_builder()
