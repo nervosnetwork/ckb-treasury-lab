@@ -41,7 +41,7 @@ flowchart LR
    vote was committed inside the Proposal's inclusive voting window.
 3. The Proposal creator consumes one or more non-overlapping, proposer-locked
    YES Counting Cells and changes the Proposal from `Closed` to `Finalized`.
-   The Proposal records the verified YES amount and vote count.
+   The Proposal records the certified YES amount and certified vote count.
 4. During the challenge period, a challenger can create NO Counting Cells under
    its own authenticated lock and consume enough non-overlapping NO ranges to
    prove that the configured passing rule is false. All NO Counting Cells in one
@@ -111,6 +111,10 @@ multiplication: `yes * 10_000 > (yes + no) * approval_bps`. Consequently, an
 approval ratio exactly equal to the configured threshold is rejected. A
 challenger only needs enough verified NO weight to make this inequality false;
 it does not need to prove the complete NO tally.
+
+The Result wire fields are named `certified_yes_amount` and
+`challenging_no_amount`. They record the sufficient on-chain certificates used
+for the decision, not a claim that every YES and NO Vote Cell was counted.
 
 `minimum_yes_amount` is a minimum certified-YES threshold, not a
 `YES + NO` quorum. This matches the optimistic construction: the Proposal

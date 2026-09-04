@@ -107,10 +107,10 @@ fn update() -> Result<(), Error> {
 }
 
 fn close(input: &ProposalData, output: &ProposalData) -> Result<(), Error> {
-    if input.yes_amount != 0
-        || input.yes_vote_count != 0
-        || output.yes_amount != 0
-        || output.yes_vote_count != 0
+    if input.certified_yes_amount != 0
+        || input.certified_yes_vote_count != 0
+        || output.certified_yes_amount != 0
+        || output.certified_yes_vote_count != 0
     {
         return Err(Error::InvalidTransition);
     }
@@ -135,7 +135,7 @@ fn finalize_yes(
     if owner_lock != input.proposer_lock_hash {
         return Err(Error::CountingOwnersInvalid);
     }
-    if output.yes_amount != yes || output.yes_vote_count != vote_count {
+    if output.certified_yes_amount != yes || output.certified_yes_vote_count != vote_count {
         return Err(Error::ResultMismatch);
     }
     if !config.passes(yes, 0, input.requested_amount) {
@@ -167,7 +167,7 @@ fn terminate() -> Result<(), Error> {
         return expire(&proposal, &config, result_index, &result);
     }
     if proposal.phase != ProposalPhase::Finalized
-        || result.yes != proposal.yes_amount
+        || result.certified_yes_amount != proposal.certified_yes_amount
         || result.final_state_hash
             != blake2b_256(&proposal.encode().map_err(|_| Error::InvalidProposalData)?)
         || result.veto_reason_hash != [0; 32]
@@ -176,10 +176,19 @@ fn terminate() -> Result<(), Error> {
     }
 
     match result.outcome {
-        ProposalOutcome::Passed => settle_passed(&proposal, &config, result_index, result.no),
-        ProposalOutcome::RejectedByVote => {
-            settle_challenge(&proposal, &config, proposal_id, result_index, result.no)
-        }
+        ProposalOutcome::Passed => settle_passed(
+            &proposal,
+            &config,
+            result_index,
+            result.challenging_no_amount,
+        ),
+        ProposalOutcome::RejectedByVote => settle_challenge(
+            &proposal,
+            &config,
+            proposal_id,
+            result_index,
+            result.challenging_no_amount,
+        ),
         ProposalOutcome::Vetoed | ProposalOutcome::Expired => unreachable!(),
         ProposalOutcome::Paid | ProposalOutcome::RejectionClaimed => Err(Error::ResultMismatch),
     }
@@ -192,8 +201,8 @@ fn expire(
     result: &ResultData,
 ) -> Result<(), Error> {
     if proposal.phase != ProposalPhase::Closed
-        || result.yes != 0
-        || result.no != 0
+        || result.certified_yes_amount != 0
+        || result.challenging_no_amount != 0
         || result.final_state_hash
             != blake2b_256(&proposal.encode().map_err(|_| Error::InvalidProposalData)?)
         || result.veto_reason_hash != [0; 32]
@@ -221,9 +230,9 @@ fn settle_passed(
     proposal: &ProposalData,
     config: &CountingConfig,
     result_index: usize,
-    no: u128,
+    challenging_no_amount: u128,
 ) -> Result<(), Error> {
-    if no != 0 || has_counting_inputs(config) {
+    if challenging_no_amount != 0 || has_counting_inputs(config) {
         return Err(Error::ResultMismatch);
     }
     let since = Since::new(
@@ -257,7 +266,7 @@ fn settle_challenge(
     if no != claimed_no {
         return Err(Error::ResultMismatch);
     }
-    if config.passes(proposal.yes_amount, no, proposal.requested_amount) {
+    if config.passes(proposal.certified_yes_amount, no, proposal.requested_amount) {
         return Err(Error::ChallengeRuleNotMet);
     }
     if load_cell_lock_hash(result_index, Source::Output).map_err(|_| Error::ResultLockInvalid)?

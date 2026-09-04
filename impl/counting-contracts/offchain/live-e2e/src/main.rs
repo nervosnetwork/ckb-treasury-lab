@@ -456,8 +456,8 @@ fn run() -> AnyResult<()> {
         challenge_period: 5,
         minimum_vote_capacity: 100 * CKB,
         requested_amount: 100 * CKB,
-        yes_amount: 0,
-        yes_vote_count: 0,
+        certified_yes_amount: 0,
+        certified_yes_vote_count: 0,
         receiver_lock_hash: [0x55; 32],
         proposer_lock_hash: packed_hash(&proposer_lock.calc_script_hash()),
         config_type_hash: packed_hash(&config_type.calc_script_hash()),
@@ -604,8 +604,8 @@ fn run() -> AnyResult<()> {
     );
     let mut finalized = closed.clone();
     finalized.phase = ProposalPhase::Finalized;
-    finalized.yes_amount = yes_count.amount;
-    finalized.yes_vote_count = 1;
+    finalized.certified_yes_amount = yes_count.amount;
+    finalized.certified_yes_vote_count = 1;
     let finalized_commit = rpc.commit(
         "finalize YES candidate",
         transaction(
@@ -678,8 +678,8 @@ fn run() -> AnyResult<()> {
         proposal_id,
         requested_amount: finalized.requested_amount,
         receiver_lock_hash: finalized.receiver_lock_hash,
-        yes: finalized.yes_amount,
-        no: no_count.amount,
+        certified_yes_amount: finalized.certified_yes_amount,
+        challenging_no_amount: no_count.amount,
         final_state_hash: blake2b_256(&encoded(finalized.encode())?),
         proposal_config_data_hash: blake2b_256(&encoded(config.encode())?),
         veto_reason_hash: [0; 32],
@@ -808,8 +808,8 @@ fn run() -> AnyResult<()> {
         "status": "passed",
         "chain_directory": run_dir,
         "proposal_id": hex_hash(proposal_id),
-        "yes": result.yes.to_string(),
-        "no": result.no.to_string(),
+        "certified_yes_amount": result.certified_yes_amount.to_string(),
+        "challenging_no_amount": result.challenging_no_amount.to_string(),
         "outcome": "RejectedByVote",
         "transactions": {
             "proposal": commit_json(&proposal_commit),
@@ -885,8 +885,8 @@ fn run_passed_payout(
         challenge_period: config.minimum_challenge_period,
         minimum_vote_capacity: 100 * CKB,
         requested_amount: 100 * CKB,
-        yes_amount: 0,
-        yes_vote_count: 0,
+        certified_yes_amount: 0,
+        certified_yes_vote_count: 0,
         receiver_lock_hash: packed_hash(&receiver_lock.calc_script_hash()),
         proposer_lock_hash: packed_hash(&proposer_lock.calc_script_hash()),
         config_type_hash: packed_hash(
@@ -1018,8 +1018,8 @@ fn run_passed_payout(
     );
     let mut finalized = closed.clone();
     finalized.phase = ProposalPhase::Finalized;
-    finalized.yes_amount = counting.amount;
-    finalized.yes_vote_count = 1;
+    finalized.certified_yes_amount = counting.amount;
+    finalized.certified_yes_vote_count = 1;
     let finalized_commit = rpc.commit(
         "finalize Passed candidate",
         transaction(
@@ -1060,8 +1060,8 @@ fn run_passed_payout(
         proposal_id,
         requested_amount: finalized.requested_amount,
         receiver_lock_hash: finalized.receiver_lock_hash,
-        yes: finalized.yes_amount,
-        no: 0,
+        certified_yes_amount: finalized.certified_yes_amount,
+        challenging_no_amount: 0,
         final_state_hash: blake2b_256(&encoded(finalized.encode())?),
         proposal_config_data_hash: blake2b_256(&encoded(config.encode())?),
         veto_reason_hash: [0; 32],

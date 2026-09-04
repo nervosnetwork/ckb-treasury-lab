@@ -132,8 +132,8 @@ impl Fixture {
     fn proposal(
         &self,
         phase: ProposalPhase,
-        yes_amount: u128,
-        yes_vote_count: u64,
+        certified_yes_amount: u128,
+        certified_yes_vote_count: u64,
     ) -> ProposalData {
         ProposalData {
             phase,
@@ -142,8 +142,8 @@ impl Fixture {
             challenge_period: 5,
             minimum_vote_capacity: 10 * CKB,
             requested_amount: 1_000 * CKB,
-            yes_amount,
-            yes_vote_count,
+            certified_yes_amount,
+            certified_yes_vote_count,
             receiver_lock_hash: [0x44; 32],
             proposer_lock_hash: script_hash(&self.proposer_lock),
             config_type_hash: script_hash(&self.config_type),
@@ -600,8 +600,8 @@ fn proposal_finalization_aggregates_only_non_overlapping_yes_ranges() {
     });
     let mut finalized = closed.clone();
     finalized.phase = ProposalPhase::Finalized;
-    finalized.yes_amount = 700 * CKB as u128;
-    finalized.yes_vote_count = 7;
+    finalized.certified_yes_amount = 700 * CKB as u128;
+    finalized.certified_yes_vote_count = 7;
     let overlap = fixture.counting_cell(CountingCellData {
         direction: 1,
         range_start: 100,
@@ -712,8 +712,8 @@ fn no_counting_cells_can_challenge_a_finalized_candidate() {
         proposal_id: fixture.proposal_id,
         requested_amount: finalized.requested_amount,
         receiver_lock_hash: finalized.receiver_lock_hash,
-        yes: finalized.yes_amount,
-        no: 400 * CKB as u128,
+        certified_yes_amount: finalized.certified_yes_amount,
+        challenging_no_amount: 400 * CKB as u128,
         final_state_hash: blake2b_256(&finalized.encode().unwrap()),
         proposal_config_data_hash: blake2b_256(&config_data),
         veto_reason_hash: [0; 32],
@@ -842,8 +842,8 @@ fn passed_result_requires_the_relative_challenge_period() {
         proposal_id: fixture.proposal_id,
         requested_amount: finalized.requested_amount,
         receiver_lock_hash: finalized.receiver_lock_hash,
-        yes: finalized.yes_amount,
-        no: 0,
+        certified_yes_amount: finalized.certified_yes_amount,
+        challenging_no_amount: 0,
         final_state_hash: blake2b_256(&finalized.encode().unwrap()),
         proposal_config_data_hash: blake2b_256(&fixture.config.encode().unwrap()),
         veto_reason_hash: [0; 32],
@@ -891,8 +891,8 @@ fn closed_proposal_can_expire_and_terminal_receipt_unlocks_event_cells() {
         proposal_id: fixture.proposal_id,
         requested_amount: closed.requested_amount,
         receiver_lock_hash: closed.receiver_lock_hash,
-        yes: 0,
-        no: 0,
+        certified_yes_amount: 0,
+        challenging_no_amount: 0,
         final_state_hash: blake2b_256(&closed.encode().unwrap()),
         proposal_config_data_hash: blake2b_256(&fixture.config.encode().unwrap()),
         veto_reason_hash: [0; 32],
@@ -1004,8 +1004,8 @@ fn guardian_can_veto_before_final_settlement() {
         proposal_id: fixture.proposal_id,
         requested_amount: proposal.requested_amount,
         receiver_lock_hash: proposal.receiver_lock_hash,
-        yes: 0,
-        no: 0,
+        certified_yes_amount: 0,
+        challenging_no_amount: 0,
         final_state_hash: [0; 32],
         proposal_config_data_hash: blake2b_256(&fixture.config.encode().unwrap()),
         veto_reason_hash: [0xaa; 32],

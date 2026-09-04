@@ -131,8 +131,8 @@ pub struct ResultData {
     pub proposal_id: Hash,
     pub requested_amount: u64,
     pub receiver_lock_hash: Hash,
-    pub yes: u128,
-    pub no: u128,
+    pub certified_yes_amount: u128,
+    pub challenging_no_amount: u128,
     pub final_state_hash: Hash,
     pub proposal_config_data_hash: Hash,
     pub veto_reason_hash: Hash,
@@ -150,15 +150,16 @@ impl ResultData {
             proposal_id: reader.hash()?,
             requested_amount: reader.u64()?,
             receiver_lock_hash: reader.hash()?,
-            yes: reader.u128()?,
-            no: reader.u128()?,
+            certified_yes_amount: reader.u128()?,
+            challenging_no_amount: reader.u128()?,
             final_state_hash: reader.hash()?,
             proposal_config_data_hash: reader.hash()?,
             veto_reason_hash: reader.hash()?,
         };
         reader.finish()?;
-        let veto_tally_is_zero =
-            value.yes == 0 && value.no == 0 && value.final_state_hash == [0; 32];
+        let veto_tally_is_zero = value.certified_yes_amount == 0
+            && value.challenging_no_amount == 0
+            && value.final_state_hash == [0; 32];
         match value.outcome {
             ProposalOutcome::Vetoed if !veto_tally_is_zero || value.veto_reason_hash == [0; 32] => {
                 return Err(CodecError::InvalidValue);
@@ -172,7 +173,9 @@ impl ResultData {
             {
                 return Err(CodecError::InvalidValue);
             }
-            ProposalOutcome::Expired if value.yes != 0 || value.no != 0 => {
+            ProposalOutcome::Expired
+                if value.certified_yes_amount != 0 || value.challenging_no_amount != 0 =>
+            {
                 return Err(CodecError::InvalidValue);
             }
             _ => {}
@@ -187,8 +190,8 @@ impl ResultData {
         output.extend_from_slice(&self.proposal_id);
         output.extend_from_slice(&self.requested_amount.to_le_bytes());
         output.extend_from_slice(&self.receiver_lock_hash);
-        output.extend_from_slice(&self.yes.to_le_bytes());
-        output.extend_from_slice(&self.no.to_le_bytes());
+        output.extend_from_slice(&self.certified_yes_amount.to_le_bytes());
+        output.extend_from_slice(&self.challenging_no_amount.to_le_bytes());
         output.extend_from_slice(&self.final_state_hash);
         output.extend_from_slice(&self.proposal_config_data_hash);
         output.extend_from_slice(&self.veto_reason_hash);
@@ -236,8 +239,8 @@ pub struct ProposalData {
     pub challenge_period: u64,
     pub minimum_vote_capacity: u64,
     pub requested_amount: u64,
-    pub yes_amount: u128,
-    pub yes_vote_count: u64,
+    pub certified_yes_amount: u128,
+    pub certified_yes_vote_count: u64,
     pub receiver_lock_hash: Hash,
     pub proposer_lock_hash: Hash,
     pub config_type_hash: Hash,
@@ -258,15 +261,15 @@ impl ProposalData {
             challenge_period: reader.u64()?,
             minimum_vote_capacity: reader.u64()?,
             requested_amount: reader.u64()?,
-            yes_amount: reader.u128()?,
-            yes_vote_count: reader.u64()?,
+            certified_yes_amount: reader.u128()?,
+            certified_yes_vote_count: reader.u64()?,
             receiver_lock_hash: reader.hash()?,
             proposer_lock_hash: reader.hash()?,
             config_type_hash: reader.hash()?,
             metadata_hash: reader.hash()?,
         };
         reader.finish()?;
-        let tally_is_zero = value.yes_amount == 0 && value.yes_vote_count == 0;
+        let tally_is_zero = value.certified_yes_amount == 0 && value.certified_yes_vote_count == 0;
         if value.start_block >= value.end_block
             || value.challenge_period == 0
             || value.minimum_vote_capacity == 0
@@ -289,8 +292,8 @@ impl ProposalData {
         output.extend_from_slice(&self.challenge_period.to_le_bytes());
         output.extend_from_slice(&self.minimum_vote_capacity.to_le_bytes());
         output.extend_from_slice(&self.requested_amount.to_le_bytes());
-        output.extend_from_slice(&self.yes_amount.to_le_bytes());
-        output.extend_from_slice(&self.yes_vote_count.to_le_bytes());
+        output.extend_from_slice(&self.certified_yes_amount.to_le_bytes());
+        output.extend_from_slice(&self.certified_yes_vote_count.to_le_bytes());
         output.extend_from_slice(&self.receiver_lock_hash);
         output.extend_from_slice(&self.proposer_lock_hash);
         output.extend_from_slice(&self.config_type_hash);
@@ -304,10 +307,10 @@ impl ProposalData {
         let mut rhs = other.clone();
         lhs.phase = ProposalPhase::Open;
         rhs.phase = ProposalPhase::Open;
-        lhs.yes_amount = 0;
-        rhs.yes_amount = 0;
-        lhs.yes_vote_count = 0;
-        rhs.yes_vote_count = 0;
+        lhs.certified_yes_amount = 0;
+        rhs.certified_yes_amount = 0;
+        lhs.certified_yes_vote_count = 0;
+        rhs.certified_yes_vote_count = 0;
         lhs == rhs
     }
 }
@@ -593,8 +596,8 @@ mod tests {
             challenge_period: 5,
             minimum_vote_capacity: 1,
             requested_amount: 1_000,
-            yes_amount: 0,
-            yes_vote_count: 0,
+            certified_yes_amount: 0,
+            certified_yes_vote_count: 0,
             receiver_lock_hash: [1; 32],
             proposer_lock_hash: [2; 32],
             config_type_hash: [3; 32],
@@ -634,8 +637,8 @@ mod tests {
             proposal_id: [1; 32],
             requested_amount: 1_000,
             receiver_lock_hash: [2; 32],
-            yes: 100,
-            no: 0,
+            certified_yes_amount: 100,
+            challenging_no_amount: 0,
             final_state_hash: [3; 32],
             proposal_config_data_hash: [4; 32],
             veto_reason_hash: [0; 32],
@@ -655,8 +658,8 @@ mod tests {
             challenge_period: 5,
             minimum_vote_capacity: 1,
             requested_amount: 1_000,
-            yes_amount: 0,
-            yes_vote_count: 0,
+            certified_yes_amount: 0,
+            certified_yes_vote_count: 0,
             receiver_lock_hash: [1; 32],
             proposer_lock_hash: [2; 32],
             config_type_hash: [3; 32],
@@ -664,8 +667,8 @@ mod tests {
         };
         proposal.phase = ProposalPhase::Finalized;
         assert_eq!(proposal.encode(), Err(CodecError::InvalidValue));
-        proposal.yes_amount = 100;
-        proposal.yes_vote_count = 1;
+        proposal.certified_yes_amount = 100;
+        proposal.certified_yes_vote_count = 1;
         assert!(proposal.encode().is_ok());
     }
 

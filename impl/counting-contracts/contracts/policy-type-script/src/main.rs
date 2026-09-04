@@ -90,8 +90,8 @@ fn create_result(
     }
     if result.outcome == ProposalOutcome::Expired {
         if proposal.phase != ProposalPhase::Closed
-            || result.yes != 0
-            || result.no != 0
+            || result.certified_yes_amount != 0
+            || result.challenging_no_amount != 0
             || result.final_state_hash != blake2b_256(&proposal_data)
             || result.veto_reason_hash != [0; 32]
             || load_cell_lock_hash(0, Source::GroupOutput).map_err(|_| Error::ResultLockInvalid)?
@@ -108,13 +108,17 @@ fn create_result(
         return Err(Error::ResultMismatch);
     }
     if proposal.phase != ProposalPhase::Finalized
-        || result.yes != proposal.yes_amount
+        || result.certified_yes_amount != proposal.certified_yes_amount
         || result.final_state_hash != blake2b_256(&proposal_data)
         || result.veto_reason_hash != [0; 32]
     {
         return Err(Error::ResultMismatch);
     }
-    let passes = config.passes(result.yes, result.no, proposal.requested_amount);
+    let passes = config.passes(
+        result.certified_yes_amount,
+        result.challenging_no_amount,
+        proposal.requested_amount,
+    );
     if (result.outcome == ProposalOutcome::Passed) != passes {
         return Err(Error::ResultMismatch);
     }
