@@ -46,6 +46,7 @@ struct CodeCells {
     vote: packed::OutPoint,
     counting: packed::OutPoint,
     policy: packed::OutPoint,
+    treasury: packed::OutPoint,
 }
 
 struct NodeGuard(Child);
@@ -277,7 +278,14 @@ fn run() -> AnyResult<()> {
     let challenger_lock = script(always_hash, DATA_HASH_TYPE, &[0x22]);
     let guardian_lock = script(always_hash, DATA_HASH_TYPE, &[0x24]);
     let burn_lock = script(always_hash, DATA_HASH_TYPE, &[0]);
-    let treasury_lock = script(always_hash, DATA_HASH_TYPE, &[0x31]);
+    let receiver_lock = script(always_hash, DATA_HASH_TYPE, &[0x55]);
+    let treasury_config_type = script(always_hash, DATA_HASH_TYPE, &[0x42]);
+    let treasury_config_type_hash = packed_hash(&treasury_config_type.calc_script_hash());
+    let treasury_lock = script(
+        *code_hashes.get("treasury").unwrap(),
+        DATA1_HASH_TYPE,
+        &treasury_config_type_hash,
+    );
     let config_type = script(
         *code_hashes.get("config").unwrap(),
         DATA1_HASH_TYPE,
@@ -322,6 +330,10 @@ fn run() -> AnyResult<()> {
         counting_hash_type: DATA1_HASH_TYPE,
         policy_type_hash: packed_hash(&policy_type.calc_script_hash()),
     };
+    let treasury_config = encode_treasury_config(
+        packed_hash(&policy_type.calc_script_hash()),
+        packed_hash(&burn_lock.calc_script_hash()),
+    );
 
     let run_id = format!(
         "{}-{}",
@@ -331,7 +343,16 @@ fn run() -> AnyResult<()> {
     let run_dir = workspace.join("target/live-e2e").join(run_id);
     fs::create_dir_all(&run_dir)?;
     let spec_path = run_dir.join("source.toml");
-    write_chain_spec(&spec_path, &binaries, &config_type, &config, always_hash)?;
+    write_chain_spec(
+        &spec_path,
+        &binaries,
+        &config_type,
+        &config,
+        &treasury_config_type,
+        &treasury_config,
+        &treasury_lock,
+        always_hash,
+    )?;
     let rpc_port = free_port()?;
     let p2p_port = free_port()?;
     initialize_node(&ckb_bin, &run_dir, &spec_path, rpc_port, p2p_port)?;
@@ -364,6 +385,12 @@ fn run() -> AnyResult<()> {
         .find(|cell| cell.output.type_().to_opt().as_ref() == Some(&config_type))
         .cloned()
         .ok_or_else(|| other("CountingConfig Cell is missing"))?;
+    let treasury_config_cell = cells
+        .iter()
+        .find(|cell| cell.output.type_().to_opt().as_ref() == Some(&treasury_config_type))
+        .cloned()
+        .ok_or_else(|| other("TreasuryConfig Cell is missing"))?;
+    let treasury_cell = find_cell(&cells, &treasury_lock, 5_000 * CKB)?;
     let proposal_funding = find_cell(&cells, &proposer_lock, 1_500 * CKB)?;
     let proposer_counting_funding = find_cell(&cells, &proposer_lock, 200 * CKB)?;
     let yes_dao_funding = find_cell(&cells, &yes_voter_lock, 1_000 * CKB)?;
@@ -371,6 +398,10 @@ fn run() -> AnyResult<()> {
     let no_dao_funding = find_cell(&cells, &no_voter_lock, 800 * CKB)?;
     let no_vote_funding = find_cell(&cells, &no_voter_lock, 500 * CKB)?;
     let challenger_counting_funding = find_cell(&cells, &challenger_lock, 200 * CKB)?;
+    let passed_proposal_funding = find_cell(&cells, &proposer_lock, 1_600 * CKB)?;
+    let passed_counting_funding = find_cell(&cells, &proposer_lock, 210 * CKB)?;
+    let passed_dao_funding = find_cell(&cells, &yes_voter_lock, 1_100 * CKB)?;
+    let passed_vote_funding = find_cell(&cells, &yes_voter_lock, 510 * CKB)?;
 
     let yes_dao = rpc.commit(
         "YES DAO deposit",
@@ -712,6 +743,24 @@ fn run() -> AnyResult<()> {
             )));
         }
     }
+    let passed_report = run_passed_payout(
+        &mut rpc,
+        &code,
+        &config,
+        &config_cell,
+        &treasury_config_cell,
+        &treasury_cell,
+        &proposal_lock,
+        &proposer_lock,
+        &yes_voter_lock,
+        &receiver_lock,
+        &dao_type,
+        &policy_type,
+        passed_proposal_funding,
+        passed_counting_funding,
+        passed_dao_funding,
+        passed_vote_funding,
+    )?;
     let report = json!({
         "status": "passed",
         "chain_directory": run_dir,
@@ -728,13 +777,334 @@ fn run() -> AnyResult<()> {
             "no_counting": commit_json(&no_count_commit),
             "challenge": commit_json(&challenge_commit),
             "claim_bond": commit_json(&claim_bond_commit),
-        }
+        },
+        "passed_payout": passed_report,
     });
     let report_path = run_dir.join("report.json");
     fs::write(&report_path, serde_json::to_vec_pretty(&report)?)?;
     println!("  report                   {}", report_path.display());
     println!("Hash-range Counting Cell live E2E PASSED");
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_passed_payout(
+    rpc: &mut Rpc,
+    code: &CodeCells,
+    config: &CountingConfig,
+    config_cell: &CellRef,
+    treasury_config_cell: &CellRef,
+    treasury_cell: &CellRef,
+    proposal_lock: &packed::Script,
+    proposer_lock: &packed::Script,
+    yes_voter_lock: &packed::Script,
+    receiver_lock: &packed::Script,
+    dao_type: &packed::Script,
+    policy_type: &packed::Script,
+    proposal_funding: CellRef,
+    counting_funding: CellRef,
+    dao_funding: CellRef,
+    vote_funding: CellRef,
+) -> AnyResult<Value> {
+    let dao_commit = rpc.commit(
+        "Passed YES DAO deposit",
+        simple_transfer(
+            &dao_funding,
+            yes_voter_lock,
+            Some(dao_type.clone()),
+            Bytes::from(vec![0; 8]),
+            vec![code_dep(&code.always), code_dep(&code.dao)],
+        ),
+    )?;
+    let dao_cell = output_cell(
+        &dao_commit,
+        0,
+        capacity(&dao_funding.output),
+        yes_voter_lock,
+        Some(dao_type),
+        vec![0; 8],
+    );
+    let start_block = rpc.tip_number()? + 8;
+    let end_block = start_block + 20;
+    let proposal_input = input(&proposal_funding.out_point);
+    let proposal_type = script(
+        config.proposal_code_hash,
+        config.proposal_hash_type,
+        &type_id(&proposal_input, 0),
+    );
+    let proposal_id = packed_hash(&proposal_type.calc_script_hash());
+    let open = ProposalData {
+        phase: ProposalPhase::Open,
+        start_block,
+        end_block,
+        challenge_period: config.minimum_challenge_period,
+        minimum_vote_capacity: 100 * CKB,
+        requested_amount: 100 * CKB,
+        yes_amount: 0,
+        yes_vote_count: 0,
+        receiver_lock_hash: packed_hash(&receiver_lock.calc_script_hash()),
+        proposer_lock_hash: packed_hash(&proposer_lock.calc_script_hash()),
+        config_type_hash: packed_hash(
+            &config_cell
+                .output
+                .type_()
+                .to_opt()
+                .ok_or_else(|| other("CountingConfig Cell has no type script"))?
+                .calc_script_hash(),
+        ),
+        metadata_hash: blake2b_256(b"Passed Treasury payout live E2E"),
+    };
+    let proposal_commit = rpc.commit(
+        "create Passed Proposal",
+        transaction(
+            vec![proposal_input],
+            vec![
+                code_dep(&code.always),
+                code_dep(&code.proposal),
+                code_dep(&config_cell.out_point),
+            ],
+            vec![],
+            vec![output(
+                capacity(&proposal_funding.output),
+                proposal_lock,
+                Some(proposal_type.clone()),
+            )],
+            vec![Bytes::from(encoded(open.encode())?)],
+        ),
+    )?;
+    let open_cell = output_cell(
+        &proposal_commit,
+        0,
+        capacity(&proposal_funding.output),
+        proposal_lock,
+        Some(&proposal_type),
+        encoded(open.encode())?,
+    );
+    rpc.mine_to(start_block)?;
+    let vote_type = script(config.vote_code_hash, config.vote_hash_type, &proposal_id);
+    let proposal_header = rpc.block_hash(proposal_commit.block_number)?;
+    let dao_header = rpc.block_hash(dao_commit.block_number)?;
+    let vote_commit = submit_vote(
+        rpc,
+        "submit Passed YES vote",
+        code,
+        &vote_funding,
+        yes_voter_lock,
+        &vote_type,
+        &open_cell,
+        config_cell,
+        &dao_cell,
+        1,
+        capacity(&dao_funding.output),
+        vec![proposal_header, dao_header],
+    )?;
+    rpc.mine_to(end_block)?;
+
+    let mut closed = open.clone();
+    closed.phase = ProposalPhase::Closed;
+    let end_header = rpc.block_hash(end_block)?;
+    let close_commit = rpc.commit(
+        "close Passed Proposal",
+        transaction(
+            vec![input(&open_cell.out_point)],
+            vec![
+                code_dep(&code.always),
+                code_dep(&code.proposal),
+                code_dep(&config_cell.out_point),
+            ],
+            vec![end_header],
+            vec![output(
+                capacity(&proposal_funding.output),
+                proposal_lock,
+                Some(proposal_type.clone()),
+            )],
+            vec![Bytes::from(encoded(closed.encode())?)],
+        ),
+    )?;
+    let closed_cell = output_cell(
+        &close_commit,
+        0,
+        capacity(&proposal_funding.output),
+        proposal_lock,
+        Some(&proposal_type),
+        encoded(closed.encode())?,
+    );
+    let counting_type = script(
+        config.counting_code_hash,
+        config.counting_hash_type,
+        &proposal_id,
+    );
+    let voter_lock_hash = packed_hash(&yes_voter_lock.calc_script_hash());
+    let counting = CountingCellData {
+        direction: 1,
+        range_start: voter_lock_hash[0],
+        range_end: voter_lock_hash[0],
+        amount: capacity(&dao_funding.output) as u128,
+        vote_count: 1,
+    };
+    let counting_commit = rpc.commit(
+        "create Passed Counting Cell",
+        transaction(
+            vec![input(&counting_funding.out_point)],
+            vec![
+                code_dep(&code.always),
+                code_dep(&code.counting),
+                code_dep(&closed_cell.out_point),
+                code_dep(&config_cell.out_point),
+                code_dep(&out_point(vote_commit.hash, 0)),
+            ],
+            vec![],
+            vec![output(
+                capacity(&counting_funding.output),
+                proposer_lock,
+                Some(counting_type.clone()),
+            )],
+            vec![Bytes::from(encoded(counting.encode())?)],
+        ),
+    )?;
+    let counting_cell = output_cell(
+        &counting_commit,
+        0,
+        capacity(&counting_funding.output),
+        proposer_lock,
+        Some(&counting_type),
+        encoded(counting.encode())?,
+    );
+    let mut finalized = closed.clone();
+    finalized.phase = ProposalPhase::Finalized;
+    finalized.yes_amount = counting.amount;
+    finalized.yes_vote_count = 1;
+    let finalized_commit = rpc.commit(
+        "finalize Passed candidate",
+        transaction(
+            vec![
+                input(&closed_cell.out_point),
+                input(&counting_cell.out_point),
+            ],
+            vec![
+                code_dep(&code.always),
+                code_dep(&code.proposal),
+                code_dep(&code.counting),
+                code_dep(&config_cell.out_point),
+            ],
+            vec![],
+            vec![
+                output(
+                    capacity(&proposal_funding.output),
+                    proposal_lock,
+                    Some(proposal_type.clone()),
+                ),
+                output(capacity(&counting_funding.output), proposer_lock, None),
+            ],
+            vec![Bytes::from(encoded(finalized.encode())?), Bytes::new()],
+        ),
+    )?;
+    let finalized_cell = output_cell(
+        &finalized_commit,
+        0,
+        capacity(&proposal_funding.output),
+        proposal_lock,
+        Some(&proposal_type),
+        encoded(finalized.encode())?,
+    );
+    rpc.mine_to(finalized_commit.block_number + finalized.challenge_period)?;
+
+    let result = ResultData {
+        outcome: ProposalOutcome::Passed,
+        proposal_id,
+        requested_amount: finalized.requested_amount,
+        receiver_lock_hash: finalized.receiver_lock_hash,
+        yes: finalized.yes_amount,
+        no: 0,
+        final_state_hash: blake2b_256(&encoded(finalized.encode())?),
+        proposal_config_data_hash: blake2b_256(&encoded(config.encode())?),
+        veto_reason_hash: [0; 32],
+    };
+    let result_commit = rpc.commit(
+        "settle Passed Proposal",
+        transaction(
+            vec![input_since(
+                &finalized_cell.out_point,
+                relative_block_since(finalized.challenge_period),
+            )],
+            vec![
+                code_dep(&code.always),
+                code_dep(&code.proposal),
+                code_dep(&code.policy),
+                code_dep(&config_cell.out_point),
+            ],
+            vec![],
+            vec![output(
+                capacity(&proposal_funding.output),
+                proposer_lock,
+                Some(policy_type.clone()),
+            )],
+            vec![Bytes::from(encoded(result.encode())?)],
+        ),
+    )?;
+    let result_cell = output_cell(
+        &result_commit,
+        0,
+        capacity(&proposal_funding.output),
+        proposer_lock,
+        Some(policy_type),
+        encoded(result.encode())?,
+    );
+    let treasury_change = capacity(&treasury_cell.output)
+        .checked_sub(result.requested_amount)
+        .ok_or_else(|| other("Treasury Cell cannot cover Passed Proposal"))?;
+    let payout_commit = rpc.commit(
+        "pay Passed Proposal",
+        transaction_with_witnesses(
+            vec![
+                input(&result_cell.out_point),
+                input(&treasury_cell.out_point),
+            ],
+            vec![
+                code_dep(&code.always),
+                code_dep(&code.policy),
+                code_dep(&code.treasury),
+                code_dep(&config_cell.out_point),
+                code_dep(&treasury_config_cell.out_point),
+            ],
+            vec![],
+            vec![
+                output(result.requested_amount, receiver_lock, None),
+                output(treasury_change, &treasury_cell.output.lock(), None),
+                output(capacity(&result_cell.output), proposer_lock, None),
+            ],
+            vec![Bytes::new(), Bytes::new(), Bytes::new()],
+            vec![Bytes::new(), treasury_action_witness()],
+        ),
+    )?;
+    let receiver_cell = out_point(payout_commit.hash, 0);
+    let treasury_change_cell = out_point(payout_commit.hash, 1);
+    for (label, out_point, live) in [
+        ("Passed Result", &result_cell.out_point, false),
+        ("Treasury input", &treasury_cell.out_point, false),
+        ("Receiver payout", &receiver_cell, true),
+        ("Treasury change", &treasury_change_cell, true),
+    ] {
+        let status = rpc.live_status(out_point)?;
+        if (status == "live") != live {
+            return Err(other(format!(
+                "{label} status is {status}, expected live={live}"
+            )));
+        }
+    }
+    Ok(json!({
+        "proposal_id": hex_hash(proposal_id),
+        "requested_amount": result.requested_amount,
+        "result_wire_version": encoded(result.encode())?[0],
+        "transactions": {
+            "proposal": commit_json(&proposal_commit),
+            "vote": commit_json(&vote_commit),
+            "counting": commit_json(&counting_commit),
+            "candidate": commit_json(&finalized_commit),
+            "result": commit_json(&result_commit),
+            "treasury_payout": commit_json(&payout_commit),
+        }
+    }))
 }
 
 fn contract_binaries(workspace: &Path, ckb_repo: &Path) -> AnyResult<BTreeMap<String, PathBuf>> {
@@ -752,6 +1122,13 @@ fn contract_binaries(workspace: &Path, ckb_repo: &Path) -> AnyResult<BTreeMap<St
     ] {
         paths.insert(name.to_owned(), workspace.join("build/release").join(file));
     }
+    paths.insert(
+        "treasury".to_owned(),
+        workspace
+            .parent()
+            .ok_or_else(|| other("cannot locate impl directory"))?
+            .join("build/release/treasury-lock-script"),
+    );
     for path in paths.values() {
         require_file(path)?;
     }
@@ -763,6 +1140,9 @@ fn write_chain_spec(
     binaries: &BTreeMap<String, PathBuf>,
     config_type: &packed::Script,
     config: &CountingConfig,
+    treasury_config_type: &packed::Script,
+    treasury_config: &[u8],
+    treasury_lock: &packed::Script,
     always_hash: Hash,
 ) -> AnyResult<()> {
     let mut spec = String::new();
@@ -793,7 +1173,9 @@ fn write_chain_spec(
             "[[genesis.system_cells]]\nfile = {{ bundled = \"{resource}\" }}\ncreate_type_id = {create_type_id}"
         )?;
     }
-    for name in ["always", "config", "proposal", "vote", "counting", "policy"] {
+    for name in [
+        "always", "config", "proposal", "vote", "counting", "policy", "treasury",
+    ] {
         writeln!(
             spec,
             "[[genesis.system_cells]]\nfile = {{ file = \"{}\" }}\ncreate_type_id = false",
@@ -830,6 +1212,14 @@ fn write_chain_spec(
         config_type,
         &encoded(config.encode())?,
     )?;
+    append_issued_typed(
+        &mut spec,
+        1_000 * CKB,
+        &config_lock,
+        treasury_config_type,
+        treasury_config,
+    )?;
+    append_issued_plain(&mut spec, 5_000 * CKB, treasury_lock)?;
     for (capacity, args) in [
         (1_500 * CKB, 0x01),
         (200 * CKB, 0x01),
@@ -838,6 +1228,10 @@ fn write_chain_spec(
         (800 * CKB, 0x12),
         (500 * CKB, 0x12),
         (200 * CKB, 0x22),
+        (1_600 * CKB, 0x01),
+        (210 * CKB, 0x01),
+        (1_100 * CKB, 0x11),
+        (510 * CKB, 0x11),
     ] {
         append_issued_plain(
             &mut spec,
@@ -987,6 +1381,7 @@ fn locate_code_cells(cells: &[CellRef], hashes: &BTreeMap<String, Hash>) -> AnyR
         vote: find("vote")?,
         counting: find("counting")?,
         policy: find("policy")?,
+        treasury: find("treasury")?,
     })
 }
 
@@ -1078,6 +1473,20 @@ fn transaction(
     packed::Transaction::new_builder().raw(raw).build()
 }
 
+fn transaction_with_witnesses(
+    inputs: Vec<packed::CellInput>,
+    deps: Vec<packed::CellDep>,
+    headers: Vec<Hash>,
+    outputs: Vec<packed::CellOutput>,
+    outputs_data: Vec<Bytes>,
+    witnesses: Vec<Bytes>,
+) -> packed::Transaction {
+    transaction(inputs, deps, headers, outputs, outputs_data)
+        .as_builder()
+        .witnesses(witnesses.pack())
+        .build()
+}
+
 fn output(
     capacity: u64,
     lock: &packed::Script,
@@ -1114,9 +1523,25 @@ fn script(code_hash: Hash, hash_type: u8, args: &[u8]) -> packed::Script {
 }
 
 fn input(out_point: &packed::OutPoint) -> packed::CellInput {
+    input_since(out_point, 0)
+}
+
+fn input_since(out_point: &packed::OutPoint, since: u64) -> packed::CellInput {
     packed::CellInput::new_builder()
         .previous_output(out_point.clone())
+        .since(since)
         .build()
+}
+
+fn relative_block_since(blocks: u64) -> u64 {
+    (1u64 << 63) | blocks
+}
+
+fn treasury_action_witness() -> Bytes {
+    packed::WitnessArgs::new_builder()
+        .lock(Some(Bytes::from(vec![1])).pack())
+        .build()
+        .as_bytes()
 }
 
 fn code_dep(out_point: &packed::OutPoint) -> packed::CellDep {
@@ -1143,6 +1568,18 @@ fn type_id(first_input: &packed::CellInput, output_index: u64) -> Hash {
     let mut preimage = first_input.as_slice().to_vec();
     preimage.extend_from_slice(&output_index.to_le_bytes());
     blake2b_256(&preimage)
+}
+
+fn encode_treasury_config(result_type_hash: Hash, zero_lock_hash: Hash) -> Vec<u8> {
+    let mut output = Vec::with_capacity(97);
+    output.push(2);
+    output.extend_from_slice(&100u64.to_le_bytes());
+    output.extend_from_slice(&CKB.to_le_bytes());
+    output.extend_from_slice(&0u64.to_le_bytes());
+    output.extend_from_slice(&CKB.to_le_bytes());
+    output.extend_from_slice(&result_type_hash);
+    output.extend_from_slice(&zero_lock_hash);
+    output
 }
 
 fn capacity(output: &packed::CellOutput) -> u64 {

@@ -6,6 +6,7 @@ use alloc::vec::Vec;
 use ckb_hash::new_blake2b;
 
 pub const VERSION: u8 = 3;
+pub const RESULT_VERSION: u8 = 2;
 pub const PROPOSAL_DATA_LEN: usize = 194;
 pub const COUNTING_CELL_DATA_LEN: usize = 24;
 pub const COUNTING_CONFIG_LEN: usize = 339;
@@ -54,7 +55,7 @@ pub struct VoteData {
 impl VoteData {
     pub fn decode(data: &[u8]) -> Result<Self, CodecError> {
         let mut reader = Reader::new(data);
-        reader.version()?;
+        reader.version(VERSION)?;
         let direction = reader.u8()?;
         if direction > 1 {
             return Err(CodecError::InvalidValue);
@@ -137,7 +138,7 @@ impl ResultData {
             return Err(CodecError::InvalidValue);
         }
         let mut reader = Reader::new(data);
-        reader.version()?;
+        reader.version(RESULT_VERSION)?;
         let value = Self {
             outcome: ProposalOutcome::try_from(reader.u8()?)?,
             proposal_id: reader.hash()?,
@@ -167,7 +168,7 @@ impl ResultData {
 
     pub fn encode(&self) -> Result<Vec<u8>, CodecError> {
         let mut output = Vec::with_capacity(RESULT_DATA_LEN);
-        output.push(VERSION);
+        output.push(RESULT_VERSION);
         output.push(self.outcome as u8);
         output.extend_from_slice(&self.proposal_id);
         output.extend_from_slice(&self.requested_amount.to_le_bytes());
@@ -225,7 +226,7 @@ impl ProposalData {
             return Err(CodecError::InvalidValue);
         }
         let mut reader = Reader::new(data);
-        reader.version()?;
+        reader.version(VERSION)?;
         let value = Self {
             phase: ProposalPhase::try_from(reader.u8()?)?,
             start_block: reader.u64()?,
@@ -302,7 +303,7 @@ impl CountingCellData {
             return Err(CodecError::InvalidValue);
         }
         let mut reader = Reader::new(data);
-        reader.version()?;
+        reader.version(VERSION)?;
         let value = Self {
             direction: reader.u8()?,
             range_start: reader.u8()?,
@@ -367,7 +368,7 @@ impl CountingConfig {
             return Err(CodecError::InvalidValue);
         }
         let mut reader = Reader::new(data);
-        reader.version()?;
+        reader.version(VERSION)?;
         let value = Self {
             approval_bps: reader.u16()?,
             minimum_total_votes: reader.u128()?,
@@ -490,8 +491,8 @@ impl<'a> Reader<'a> {
         bytes.try_into().map_err(|_| CodecError::Truncated)
     }
 
-    fn version(&mut self) -> Result<(), CodecError> {
-        if self.u8()? == VERSION {
+    fn version(&mut self, expected: u8) -> Result<(), CodecError> {
+        if self.u8()? == expected {
             Ok(())
         } else {
             Err(CodecError::InvalidVersion)
@@ -600,6 +601,25 @@ mod tests {
             CountingConfig::decode(&config.encode().unwrap()).unwrap(),
             config
         );
+    }
+
+    #[test]
+    fn result_uses_the_treasury_compatible_wire_version() {
+        let result = ResultData {
+            outcome: ProposalOutcome::Passed,
+            proposal_id: [1; 32],
+            requested_amount: 1_000,
+            receiver_lock_hash: [2; 32],
+            yes: 100,
+            no: 0,
+            final_state_hash: [3; 32],
+            proposal_config_data_hash: [4; 32],
+            veto_reason_hash: [0; 32],
+        };
+        let encoded = result.encode().unwrap();
+        assert_eq!(encoded[0], RESULT_VERSION);
+        assert_ne!(encoded[0], VERSION);
+        assert_eq!(ResultData::decode(&encoded).unwrap(), result);
     }
 
     #[test]

@@ -36,9 +36,13 @@ size: build
 		printf '%-36s %8s bytes\n' "$$binary" "$$bytes"; \
 	done
 
-live-e2e: build
+treasury-lock:
+	$(MAKE) -C ../contracts/treasury-lock-script \
+		TOP=$(abspath ..) BUILD_DIR=build/$(MODE) build
+
+live-e2e: build treasury-lock
 	CKB_BIN="$${CKB_BIN:-/Users/yukang/code/ckb/target/debug/ckb}" \
 	CKB_REPO="$${CKB_REPO:-/Users/yukang/code/ckb}" \
 		cargo run -p counting-live-e2e
 
-.PHONY: fmt build test clippy size live-e2e
+.PHONY: fmt build test clippy size treasury-lock live-e2e
