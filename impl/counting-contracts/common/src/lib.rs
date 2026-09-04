@@ -366,7 +366,7 @@ impl CountingCellData {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CountingConfig {
     pub approval_bps: u16,
-    pub minimum_total_votes: u128,
+    pub minimum_yes_amount: u128,
     pub maximum_proposal_amount: u64,
     pub minimum_challenge_period: u64,
     pub max_votes_per_counting_cell: u32,
@@ -395,7 +395,7 @@ impl CountingConfig {
         reader.version(VERSION)?;
         let value = Self {
             approval_bps: reader.u16()?,
-            minimum_total_votes: reader.u128()?,
+            minimum_yes_amount: reader.u128()?,
             maximum_proposal_amount: reader.u64()?,
             minimum_challenge_period: reader.u64()?,
             max_votes_per_counting_cell: reader.u32()?,
@@ -417,7 +417,7 @@ impl CountingConfig {
         reader.finish()?;
         if value.approval_bps == 0
             || value.approval_bps > 10_000
-            || value.minimum_total_votes == 0
+            || value.minimum_yes_amount == 0
             || value.maximum_proposal_amount == 0
             || value.minimum_challenge_period == 0
             || value.max_votes_per_counting_cell == 0
@@ -445,7 +445,7 @@ impl CountingConfig {
         let mut output = Vec::with_capacity(COUNTING_CONFIG_LEN);
         output.push(VERSION);
         output.extend_from_slice(&self.approval_bps.to_le_bytes());
-        output.extend_from_slice(&self.minimum_total_votes.to_le_bytes());
+        output.extend_from_slice(&self.minimum_yes_amount.to_le_bytes());
         output.extend_from_slice(&self.maximum_proposal_amount.to_le_bytes());
         output.extend_from_slice(&self.minimum_challenge_period.to_le_bytes());
         output.extend_from_slice(&self.max_votes_per_counting_cell.to_le_bytes());
@@ -478,7 +478,7 @@ impl CountingConfig {
             return false;
         };
         requested_amount <= self.maximum_proposal_amount
-            && total >= self.minimum_total_votes
+            && yes >= self.minimum_yes_amount
             && weighted_yes > threshold
     }
 }
@@ -563,7 +563,7 @@ mod tests {
     fn config() -> CountingConfig {
         CountingConfig {
             approval_bps: 6_000,
-            minimum_total_votes: 100,
+            minimum_yes_amount: 100,
             maximum_proposal_amount: 1_000,
             minimum_challenge_period: 5,
             max_votes_per_counting_cell: 1_000,
@@ -670,10 +670,11 @@ mod tests {
     }
 
     #[test]
-    fn policy_uses_quorum_ratio_and_amount_cap() {
+    fn policy_uses_minimum_yes_ratio_and_amount_cap() {
         let config = config();
         assert!(config.passes(601, 399, 1_000));
         assert!(!config.passes(600, 400, 1_000));
+        assert!(!config.passes(99, 0, 1_000));
         assert!(!config.passes(60, 40, 1_001));
     }
 }

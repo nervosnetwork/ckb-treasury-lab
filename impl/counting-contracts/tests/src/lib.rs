@@ -83,7 +83,7 @@ impl Fixture {
             .unwrap();
         let config = CountingConfig {
             approval_bps: 6_000,
-            minimum_total_votes: 100 * CKB as u128,
+            minimum_yes_amount: 100 * CKB as u128,
             maximum_proposal_amount: 1_000 * CKB,
             minimum_challenge_period: 5,
             max_votes_per_counting_cell: 1_000,

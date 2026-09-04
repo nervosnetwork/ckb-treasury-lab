@@ -112,6 +112,11 @@ approval ratio exactly equal to the configured threshold is rejected. A
 challenger only needs enough verified NO weight to make this inequality false;
 it does not need to prove the complete NO tally.
 
+`minimum_yes_amount` is a minimum certified-YES threshold, not a
+`YES + NO` quorum. This matches the optimistic construction: the Proposal
+creator proves the YES certificate first, and a challenger may subsequently
+add enough verified NO weight to invalidate the ratio rule.
+
 This design depends on NO Vote Cells remaining available until the result is
 settled and on an interested party submitting a sufficient challenge. Vote and
 Counting Cells are therefore immutable before settlement. Afterwards, one
