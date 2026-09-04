@@ -45,6 +45,7 @@ enum Error {
     ResultMismatch,
     ResultLockInvalid,
     GuardianMissing,
+    ProposalNotExpired,
 }
 
 pub fn program_entry() -> i8 {
@@ -162,6 +163,9 @@ fn terminate() -> Result<(), Error> {
     if result.outcome == ProposalOutcome::Vetoed {
         return veto(&config, result_index);
     }
+    if result.outcome == ProposalOutcome::Expired {
+        return expire(&proposal, &config, result_index, &result);
+    }
     if proposal.phase != ProposalPhase::Finalized
         || result.yes != proposal.yes_amount
         || result.final_state_hash
@@ -176,8 +180,41 @@ fn terminate() -> Result<(), Error> {
         ProposalOutcome::RejectedByVote => {
             settle_challenge(&proposal, &config, proposal_id, result_index, result.no)
         }
-        ProposalOutcome::Vetoed => unreachable!(),
+        ProposalOutcome::Vetoed | ProposalOutcome::Expired => unreachable!(),
+        ProposalOutcome::Paid | ProposalOutcome::RejectionClaimed => Err(Error::ResultMismatch),
     }
+}
+
+fn expire(
+    proposal: &ProposalData,
+    config: &CountingConfig,
+    result_index: usize,
+    result: &ResultData,
+) -> Result<(), Error> {
+    if proposal.phase != ProposalPhase::Closed
+        || result.yes != 0
+        || result.no != 0
+        || result.final_state_hash
+            != blake2b_256(&proposal.encode().map_err(|_| Error::InvalidProposalData)?)
+        || result.veto_reason_hash != [0; 32]
+        || load_cell_lock_hash(result_index, Source::Output)
+            .map_err(|_| Error::ResultLockInvalid)?
+            != config.proposal_bond_burn_lock_hash
+    {
+        return Err(Error::ResultMismatch);
+    }
+    let since =
+        Since::new(load_input_since(0, Source::GroupInput).map_err(|_| Error::ProposalNotExpired)?);
+    if !since.flags_is_valid()
+        || !since.is_relative()
+        || !matches!(
+            since.extract_lock_value(),
+            Some(LockValue::BlockNumber(blocks)) if blocks >= proposal.challenge_period
+        )
+    {
+        return Err(Error::ProposalNotExpired);
+    }
+    Ok(())
 }
 
 fn settle_passed(

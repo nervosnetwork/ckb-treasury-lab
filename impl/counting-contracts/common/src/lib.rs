@@ -104,6 +104,9 @@ pub enum ProposalOutcome {
     Passed = 0,
     RejectedByVote = 1,
     Vetoed = 2,
+    Paid = 3,
+    RejectionClaimed = 4,
+    Expired = 5,
 }
 
 impl TryFrom<u8> for ProposalOutcome {
@@ -114,6 +117,9 @@ impl TryFrom<u8> for ProposalOutcome {
             0 => Ok(Self::Passed),
             1 => Ok(Self::RejectedByVote),
             2 => Ok(Self::Vetoed),
+            3 => Ok(Self::Paid),
+            4 => Ok(Self::RejectionClaimed),
+            5 => Ok(Self::Expired),
             _ => Err(CodecError::InvalidValue),
         }
     }
@@ -151,14 +157,22 @@ impl ResultData {
             veto_reason_hash: reader.hash()?,
         };
         reader.finish()?;
-        let zero_tally = value.yes == 0 && value.no == 0 && value.final_state_hash == [0; 32];
+        let veto_tally_is_zero =
+            value.yes == 0 && value.no == 0 && value.final_state_hash == [0; 32];
         match value.outcome {
-            ProposalOutcome::Vetoed if !zero_tally || value.veto_reason_hash == [0; 32] => {
+            ProposalOutcome::Vetoed if !veto_tally_is_zero || value.veto_reason_hash == [0; 32] => {
                 return Err(CodecError::InvalidValue);
             }
-            ProposalOutcome::Passed | ProposalOutcome::RejectedByVote
+            ProposalOutcome::Passed
+            | ProposalOutcome::RejectedByVote
+            | ProposalOutcome::Paid
+            | ProposalOutcome::RejectionClaimed
+            | ProposalOutcome::Expired
                 if value.veto_reason_hash != [0; 32] =>
             {
+                return Err(CodecError::InvalidValue);
+            }
+            ProposalOutcome::Expired if value.yes != 0 || value.no != 0 => {
                 return Err(CodecError::InvalidValue);
             }
             _ => {}
@@ -180,6 +194,16 @@ impl ResultData {
         output.extend_from_slice(&self.veto_reason_hash);
         Self::decode(&output)?;
         Ok(output)
+    }
+
+    pub fn is_terminal_receipt(&self) -> bool {
+        matches!(
+            self.outcome,
+            ProposalOutcome::Paid
+                | ProposalOutcome::RejectionClaimed
+                | ProposalOutcome::Vetoed
+                | ProposalOutcome::Expired
+        )
     }
 }
 

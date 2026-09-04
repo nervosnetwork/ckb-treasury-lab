@@ -22,6 +22,12 @@ flowchart LR
     F --> N
     F -->|challenge period expires| R[Passed Result Cell]
     N -->|passing rule becomes false| X[Rejected Result Cell]
+    C -->|expiry period elapses| E[Expired Result Receipt]
+    R --> PR[Paid Receipt]
+    X --> XR[Rejection Claimed Receipt]
+    PR --> K[Clean up Vote / Counting Cells]
+    XR --> K
+    E --> K
 ```
 
 1. A Vote Cell authenticates one voter lock and one or more live Nervos DAO
@@ -45,6 +51,11 @@ flowchart LR
 5. If no successful challenge wins first, the Finalized Proposal can be
    consumed after its relative `since` matures to create a Passed Result Cell.
    The existing Treasury payout path can then consume that Result.
+6. Payout and rejection-bond claim transactions replace their Result Cell with
+   an immutable minimum-capacity terminal receipt. A Closed Proposal that is not
+   finalized within its relative expiry period can become an `Expired` receipt.
+   Matching terminal receipts authorize owners to reclaim obsolete Vote and
+   Counting Cells without making them spendable during tally or challenge.
 
 ## Directory Layout
 
@@ -89,10 +100,11 @@ included. Finalization is therefore optimistic:
 
 The entire capacity of the Proposal Cell is its bond. Creation requires at
 least `minimum_proposal_bond`. Its capacity is preserved through Open, Closed,
-and Finalized states. Normal settlement returns the complete bond to the
-Proposal creator, a successful vote challenge transfers it to the unique owner
-of the consumed NO Counting Cells, and a Guardian veto sends it to the
-configured burn lock. Transaction fees must come from other inputs.
+and Finalized states. A payout returns the bond to the Proposal creator minus
+the terminal receipt's exact occupied capacity. A successful vote challenge
+does the same for the unique owner of the consumed NO Counting Cells. Guardian
+veto and Proposal expiry leave the bond under the configured burn lock.
+Transaction fees must come from other inputs.
 
 The approval comparison is strict and uses checked integer cross
 multiplication: `yes * 10_000 > (yes + no) * approval_bps`. Consequently, an
@@ -101,9 +113,10 @@ challenger only needs enough verified NO weight to make this inequality false;
 it does not need to prove the complete NO tally.
 
 This design depends on NO Vote Cells remaining available until the result is
-settled and on an interested party submitting a sufficient challenge. The PoC
-keeps Vote Cells immutable for that reason. A production design needs an
-explicit terminal cleanup mechanism to avoid permanent live-cell growth.
+settled and on an interested party submitting a sufficient challenge. Vote and
+Counting Cells are therefore immutable before settlement. Afterwards, one
+immutable terminal receipt per Proposal replaces the many temporary event
+Cells as the cleanup authority.
 
 The Vote Type Script proves that the referenced Proposal is still `Open`, while
 the Counting Type Script loads each Vote Cell's creation header and requires its
@@ -164,7 +177,7 @@ the SMT path commits a state transition and supports historical omission
 proofs, whereas this path verifies only live included Vote Cells and relies on
 an optimistic NO challenge.
 
-The latest real-node run used `/Users/yukang/code/ckb/target/debug/ckb` and
-completed with a Rejected Result after a verified NO challenge. Its report is
-at `target/live-e2e/1788440203-52932/report.json`. The challenger subsequently
-consumed the Rejected Result and claimed the complete 1,500 CKB Proposal bond.
+The real-node E2E uses `/Users/yukang/code/ckb/target/debug/ckb` and exercises
+both outcomes: a verified NO challenge followed by a rejection receipt and
+Vote Cell cleanup, then a Passed Result, Treasury payout, paid receipt, and Vote
+Cell cleanup. Reports are written under `target/live-e2e/<run-id>/report.json`.

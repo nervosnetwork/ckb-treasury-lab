@@ -719,6 +719,12 @@ fn run() -> AnyResult<()> {
             )));
         }
     }
+    let mut rejection_receipt = result.clone();
+    rejection_receipt.outcome = ProposalOutcome::RejectionClaimed;
+    let rejection_receipt_data = encoded(rejection_receipt.encode())?;
+    let rejection_receipt_capacity =
+        occupied_capacity(&burn_lock, Some(&policy_type), rejection_receipt_data.len());
+    let challenger_reward = 1_500 * CKB - rejection_receipt_capacity;
     let claim_bond_commit = rpc.commit(
         "claim slashed Proposal bond",
         transaction(
@@ -729,13 +735,26 @@ fn run() -> AnyResult<()> {
                 code_dep(&config_cell.out_point),
             ],
             vec![],
-            vec![output(1_500 * CKB, &challenger_lock, None)],
-            vec![Bytes::new()],
+            vec![
+                output(
+                    rejection_receipt_capacity,
+                    &burn_lock,
+                    Some(policy_type.clone()),
+                ),
+                output(challenger_reward, &challenger_lock, None),
+            ],
+            vec![Bytes::from(rejection_receipt_data), Bytes::new()],
         ),
     )?;
-    let claimed_bond_out_point = out_point(claim_bond_commit.hash, 0);
+    let rejection_receipt_out_point = out_point(claim_bond_commit.hash, 0);
+    let claimed_bond_out_point = out_point(claim_bond_commit.hash, 1);
     for (label, out_point, live) in [
         ("Claimed Rejected Result", &result_out_point, false),
+        (
+            "Rejection terminal receipt",
+            &rejection_receipt_out_point,
+            true,
+        ),
         ("Challenger bond reward", &claimed_bond_out_point, true),
     ] {
         let status = rpc.live_status(out_point)?;
@@ -745,6 +764,27 @@ fn run() -> AnyResult<()> {
             )));
         }
     }
+    let cleanup_votes_commit = rpc.commit(
+        "cleanup rejected Vote Cells",
+        transaction(
+            vec![
+                input(&out_point(yes_vote.hash, 0)),
+                input(&out_point(no_vote.hash, 0)),
+            ],
+            vec![
+                code_dep(&code.always),
+                code_dep(&code.vote),
+                code_dep(&config_cell.out_point),
+                code_dep(&rejection_receipt_out_point),
+            ],
+            vec![],
+            vec![
+                output(500 * CKB, &yes_voter_lock, None),
+                output(500 * CKB, &no_voter_lock, None),
+            ],
+            vec![Bytes::new(), Bytes::new()],
+        ),
+    )?;
     let passed_report = run_passed_payout(
         &mut rpc,
         &code,
@@ -756,6 +796,7 @@ fn run() -> AnyResult<()> {
         &proposer_lock,
         &yes_voter_lock,
         &receiver_lock,
+        &burn_lock,
         &dao_type,
         &policy_type,
         passed_proposal_funding,
@@ -779,6 +820,7 @@ fn run() -> AnyResult<()> {
             "no_counting": commit_json(&no_count_commit),
             "challenge": commit_json(&challenge_commit),
             "claim_bond": commit_json(&claim_bond_commit),
+            "cleanup_votes": commit_json(&cleanup_votes_commit),
         },
         "passed_payout": passed_report,
     });
@@ -801,6 +843,7 @@ fn run_passed_payout(
     proposer_lock: &packed::Script,
     yes_voter_lock: &packed::Script,
     receiver_lock: &packed::Script,
+    burn_lock: &packed::Script,
     dao_type: &packed::Script,
     policy_type: &packed::Script,
     proposal_funding: CellRef,
@@ -1053,6 +1096,14 @@ fn run_passed_payout(
         Some(policy_type),
         encoded(result.encode())?,
     );
+    let mut paid_receipt = result.clone();
+    paid_receipt.outcome = ProposalOutcome::Paid;
+    let paid_receipt_data = encoded(paid_receipt.encode())?;
+    let paid_receipt_capacity =
+        occupied_capacity(burn_lock, Some(policy_type), paid_receipt_data.len());
+    let proposer_bond_refund = capacity(&result_cell.output)
+        .checked_sub(paid_receipt_capacity)
+        .ok_or_else(|| other("Proposal bond cannot fund terminal receipt"))?;
     let treasury_change = capacity(&treasury_cell.output)
         .checked_sub(result.requested_amount)
         .ok_or_else(|| other("Treasury Cell cannot cover Passed Proposal"))?;
@@ -1074,19 +1125,27 @@ fn run_passed_payout(
             vec![
                 output(result.requested_amount, receiver_lock, None),
                 output(treasury_change, &treasury_cell.output.lock(), None),
-                output(capacity(&result_cell.output), proposer_lock, None),
+                output(proposer_bond_refund, proposer_lock, None),
+                output(paid_receipt_capacity, burn_lock, Some(policy_type.clone())),
             ],
-            vec![Bytes::new(), Bytes::new(), Bytes::new()],
+            vec![
+                Bytes::new(),
+                Bytes::new(),
+                Bytes::new(),
+                Bytes::from(paid_receipt_data),
+            ],
             vec![Bytes::new(), treasury_action_witness()],
         ),
     )?;
     let receiver_cell = out_point(payout_commit.hash, 0);
     let treasury_change_cell = out_point(payout_commit.hash, 1);
+    let paid_receipt_out_point = out_point(payout_commit.hash, 3);
     for (label, out_point, live) in [
         ("Passed Result", &result_cell.out_point, false),
         ("Treasury input", &treasury_cell.out_point, false),
         ("Receiver payout", &receiver_cell, true),
         ("Treasury change", &treasury_change_cell, true),
+        ("Paid terminal receipt", &paid_receipt_out_point, true),
     ] {
         let status = rpc.live_status(out_point)?;
         if (status == "live") != live {
@@ -1095,6 +1154,21 @@ fn run_passed_payout(
             )));
         }
     }
+    let cleanup_vote_commit = rpc.commit(
+        "cleanup Passed Vote Cell",
+        transaction(
+            vec![input(&out_point(vote_commit.hash, 0))],
+            vec![
+                code_dep(&code.always),
+                code_dep(&code.vote),
+                code_dep(&config_cell.out_point),
+                code_dep(&paid_receipt_out_point),
+            ],
+            vec![],
+            vec![output(capacity(&vote_funding.output), yes_voter_lock, None)],
+            vec![Bytes::new()],
+        ),
+    )?;
     Ok(json!({
         "proposal_id": hex_hash(proposal_id),
         "requested_amount": result.requested_amount,
@@ -1106,6 +1180,7 @@ fn run_passed_payout(
             "candidate": commit_json(&finalized_commit),
             "result": commit_json(&result_commit),
             "treasury_payout": commit_json(&payout_commit),
+            "cleanup_vote": commit_json(&cleanup_vote_commit),
         }
     }))
 }
@@ -1138,6 +1213,7 @@ fn contract_binaries(workspace: &Path, ckb_repo: &Path) -> AnyResult<BTreeMap<St
     Ok(paths)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_chain_spec(
     path: &Path,
     binaries: &BTreeMap<String, PathBuf>,
@@ -1587,6 +1663,16 @@ fn encode_treasury_config(result_type_hash: Hash, zero_lock_hash: Hash) -> Vec<u
 
 fn capacity(output: &packed::CellOutput) -> u64 {
     output.capacity().unpack()
+}
+
+fn occupied_capacity(
+    lock: &packed::Script,
+    type_script: Option<&packed::Script>,
+    data_len: usize,
+) -> u64 {
+    let script_bytes = |script: &packed::Script| 33 + script.args().raw_data().len();
+    let occupied_bytes = 8 + script_bytes(lock) + type_script.map_or(0, script_bytes) + data_len;
+    occupied_bytes as u64 * CKB
 }
 
 fn packed_hash(value: &packed::Byte32) -> Hash {

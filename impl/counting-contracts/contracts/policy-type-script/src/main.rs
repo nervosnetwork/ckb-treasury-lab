@@ -8,8 +8,9 @@ use ckb_std::{
     ckb_constants::Source,
     ckb_types::prelude::Entity,
     high_level::{
-        QueryIter, load_cell_capacity, load_cell_data, load_cell_lock_hash, load_cell_type,
-        load_cell_type_hash, load_script, load_script_hash, load_witness_args,
+        QueryIter, load_cell_capacity, load_cell_data, load_cell_lock_hash,
+        load_cell_occupied_capacity, load_cell_type, load_cell_type_hash, load_script,
+        load_script_hash, load_witness_args,
     },
 };
 use counting_common::{
@@ -32,6 +33,7 @@ enum Error {
     GuardianMissing,
     ResultLockInvalid,
     VetoedResultImmutable,
+    ReceiptInvalid,
 }
 
 pub fn program_entry() -> i8 {
@@ -51,17 +53,15 @@ fn run() -> Result<(), Error> {
         .map_err(|_| Error::ArgsInvalid)?;
     let inputs = QueryIter::new(load_cell_type_hash, Source::GroupInput).count();
     let outputs = QueryIter::new(load_cell_type_hash, Source::GroupOutput).count();
-    if inputs > 1 || outputs > 1 || inputs == outputs {
-        return Err(Error::InvalidCellCount);
-    }
     let (config, config_data) = load_config(config_type_hash)?;
     if load_script_hash().map_err(|_| Error::ArgsInvalid)? != config.policy_type_hash {
         return Err(Error::ProposalPolicyMismatch);
     }
-    if outputs == 1 {
-        create_result(config_type_hash, &config, &config_data)
-    } else {
-        consume_result(&config)
+    match (inputs, outputs) {
+        (0, 1) => create_result(config_type_hash, &config, &config_data),
+        (1, 1) => create_terminal_receipt(&config),
+        (1, 0) => consume_result(),
+        _ => Err(Error::InvalidCellCount),
     }
 }
 
@@ -87,6 +87,25 @@ fn create_result(
     }
     if result.outcome == ProposalOutcome::Vetoed {
         return validate_veto(config);
+    }
+    if result.outcome == ProposalOutcome::Expired {
+        if proposal.phase != ProposalPhase::Closed
+            || result.yes != 0
+            || result.no != 0
+            || result.final_state_hash != blake2b_256(&proposal_data)
+            || result.veto_reason_hash != [0; 32]
+            || load_cell_lock_hash(0, Source::GroupOutput).map_err(|_| Error::ResultLockInvalid)?
+                != config.proposal_bond_burn_lock_hash
+        {
+            return Err(Error::ResultMismatch);
+        }
+        return Ok(());
+    }
+    if matches!(
+        result.outcome,
+        ProposalOutcome::Paid | ProposalOutcome::RejectionClaimed
+    ) {
+        return Err(Error::ResultMismatch);
     }
     if proposal.phase != ProposalPhase::Finalized
         || result.yes != proposal.yes_amount
@@ -147,15 +166,38 @@ fn validate_veto(config: &CountingConfig) -> Result<(), Error> {
     }
 }
 
-fn consume_result(config: &CountingConfig) -> Result<(), Error> {
+fn create_terminal_receipt(config: &CountingConfig) -> Result<(), Error> {
     let data = load_cell_data(0, Source::GroupInput).map_err(|_| Error::ResultInvalid)?;
-    let result = ResultData::decode(&data).map_err(|_| Error::ResultInvalid)?;
-    if result.outcome == ProposalOutcome::Vetoed {
-        return Err(Error::VetoedResultImmutable);
+    let input = ResultData::decode(&data).map_err(|_| Error::ResultInvalid)?;
+    let output_data = load_cell_data(0, Source::GroupOutput).map_err(|_| Error::ReceiptInvalid)?;
+    let output = ResultData::decode(&output_data).map_err(|_| Error::ReceiptInvalid)?;
+    let expected_outcome = match input.outcome {
+        ProposalOutcome::Passed => ProposalOutcome::Paid,
+        ProposalOutcome::RejectedByVote => ProposalOutcome::RejectionClaimed,
+        _ => return Err(Error::VetoedResultImmutable),
+    };
+    let mut expected = input.clone();
+    expected.outcome = expected_outcome;
+    if output != expected
+        || load_cell_lock_hash(0, Source::GroupOutput).map_err(|_| Error::ReceiptInvalid)?
+            != config.proposal_bond_burn_lock_hash
+        || load_cell_capacity(0, Source::GroupOutput).map_err(|_| Error::ReceiptInvalid)?
+            != load_cell_occupied_capacity(0, Source::GroupOutput)
+                .map_err(|_| Error::ReceiptInvalid)?
+    {
+        return Err(Error::ReceiptInvalid);
     }
-    if result.outcome != ProposalOutcome::Passed {
-        return Ok(());
+    if input.outcome == ProposalOutcome::Passed {
+        require_treasury_payout(config)?;
     }
+    Ok(())
+}
+
+fn consume_result() -> Result<(), Error> {
+    Err(Error::VetoedResultImmutable)
+}
+
+fn require_treasury_payout(config: &CountingConfig) -> Result<(), Error> {
     let treasury_index = QueryIter::new(load_cell_lock_hash, Source::Input)
         .enumerate()
         .find_map(|(index, lock_hash)| (lock_hash == config.treasury_lock_hash).then_some(index))
@@ -167,11 +209,9 @@ fn consume_result(config: &CountingConfig) -> Result<(), Error> {
         .to_opt()
         .ok_or(Error::InvalidPayout)?
         .raw_data();
-    if action.as_ref() == [TREASURY_ACTION_PAYOUT] {
-        Ok(())
-    } else {
-        Err(Error::InvalidPayout)
-    }
+    (action.as_ref() == [TREASURY_ACTION_PAYOUT])
+        .then_some(())
+        .ok_or(Error::InvalidPayout)
 }
 
 fn load_config(config_type_hash: Hash) -> Result<(CountingConfig, alloc::vec::Vec<u8>), Error> {

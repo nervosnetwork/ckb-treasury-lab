@@ -882,6 +882,112 @@ fn passed_result_requires_the_relative_challenge_period() {
 }
 
 #[test]
+fn closed_proposal_can_expire_and_terminal_receipt_unlocks_event_cells() {
+    let mut fixture = Fixture::new();
+    let closed = fixture.proposal(ProposalPhase::Closed, 0, 0);
+    let proposal_cell = fixture.proposal_cell(&closed);
+    let expired = ResultData {
+        outcome: ProposalOutcome::Expired,
+        proposal_id: fixture.proposal_id,
+        requested_amount: closed.requested_amount,
+        receiver_lock_hash: closed.receiver_lock_hash,
+        yes: 0,
+        no: 0,
+        final_state_hash: blake2b_256(&closed.encode().unwrap()),
+        proposal_config_data_hash: blake2b_256(&fixture.config.encode().unwrap()),
+        veto_reason_hash: [0; 32],
+    };
+    let config_dep = fixture.config_dep();
+    let burn_lock = fixture.burn_lock.clone();
+    let policy_type = fixture.policy_type.clone();
+    let build_expiry = |blocks: u64| {
+        TransactionBuilder::default()
+            .cell_dep(config_dep.clone())
+            .input(
+                CellInput::new_builder()
+                    .since(0x8000_0000_0000_0000 | blocks)
+                    .previous_output(proposal_cell.clone())
+                    .build(),
+            )
+            .output(
+                CellOutput::new_builder()
+                    .capacity(1_000 * CKB)
+                    .lock(burn_lock.clone())
+                    .type_(Some(policy_type.clone()).pack())
+                    .build(),
+            )
+            .output_data(Bytes::from(expired.encode().unwrap()).pack())
+            .build()
+    };
+    let too_early = fixture.context.complete_tx(build_expiry(4));
+    assert!(
+        fixture
+            .context
+            .verify_tx(&too_early, VERIFY_CYCLES)
+            .is_err()
+    );
+    let mature = fixture.context.complete_tx(build_expiry(5));
+    fixture.context.verify_tx(&mature, VERIFY_CYCLES).unwrap();
+
+    let receipt_cell = fixture.context.create_cell(
+        CellOutput::new_builder()
+            .capacity(1_000 * CKB)
+            .lock(fixture.burn_lock.clone())
+            .type_(Some(fixture.policy_type.clone()).pack())
+            .build(),
+        Bytes::from(expired.encode().unwrap()),
+    );
+    let vote_cell = fixture.context.create_cell(
+        CellOutput::new_builder()
+            .capacity(100 * CKB)
+            .lock(fixture.owner_lock.clone())
+            .type_(Some(fixture.vote_type.clone()).pack())
+            .build(),
+        Bytes::from(
+            VoteData {
+                direction: 1,
+                amount: 100 * CKB,
+                dao_out_points: vec![CommonOutPoint {
+                    tx_hash: [9; 32],
+                    index: 0,
+                }],
+            }
+            .encode()
+            .unwrap(),
+        ),
+    );
+    let counting_cell = fixture.counting_cell(CountingCellData {
+        direction: 0,
+        range_start: 0,
+        range_end: 255,
+        amount: 100 * CKB as u128,
+        vote_count: 1,
+    });
+    let cleanup = TransactionBuilder::default()
+        .cell_dep(fixture.config_dep())
+        .cell_dep(cell_dep(receipt_cell))
+        .input(input(vote_cell))
+        .input(input(counting_cell))
+        .output(
+            CellOutput::new_builder()
+                .capacity(100 * CKB)
+                .lock(fixture.owner_lock.clone())
+                .build(),
+        )
+        .output_data(Bytes::new().pack())
+        .output(
+            CellOutput::new_builder()
+                .capacity(200 * CKB)
+                .lock(fixture.challenger_lock.clone())
+                .build(),
+        )
+        .output_data(Bytes::new().pack())
+        .build();
+    let cleanup = fixture.context.complete_tx(cleanup);
+    fixture.context.verify_tx(&cleanup, VERIFY_CYCLES).unwrap();
+}
+
+#[test]
 fn guardian_can_veto_before_final_settlement() {
     let mut fixture = Fixture::new();
     let proposal = fixture.proposal(ProposalPhase::Closed, 0, 0);

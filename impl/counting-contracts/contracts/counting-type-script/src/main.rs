@@ -14,7 +14,7 @@ use ckb_std::{
 };
 use counting_common::{
     CountingCellData, CountingConfig, ProposalData, ProposalOutcome, ProposalPhase, ResultData,
-    VoteData,
+    VoteData, blake2b_256,
 };
 
 #[repr(i8)]
@@ -42,6 +42,7 @@ enum Error {
     ProposalTransitionInvalid,
     ResultInvalid,
     InvalidTransition,
+    TerminalReceiptNotFound,
 }
 
 pub fn program_entry() -> i8 {
@@ -166,7 +167,9 @@ fn consume() -> Result<(), Error> {
         load_cell_data(0, Source::GroupInput).map_err(|_| Error::CountingDataInvalid)?;
     let counting =
         CountingCellData::decode(&counting_data).map_err(|_| Error::CountingDataInvalid)?;
-    let (proposal, proposal_type) = load_proposal(proposal_id, Source::Input)?;
+    let Ok((proposal, proposal_type)) = load_proposal(proposal_id, Source::Input) else {
+        return cleanup(proposal_id, &script);
+    };
     let config = load_config(proposal.config_type_hash)?;
     if script.code_hash().as_slice() != config.counting_code_hash
         || script.hash_type().as_slice()[0] != config.counting_hash_type
@@ -195,6 +198,45 @@ fn consume() -> Result<(), Error> {
         return Err(Error::ResultInvalid);
     }
     Ok(())
+}
+
+fn cleanup(
+    proposal_id: [u8; 32],
+    script: &ckb_std::ckb_types::packed::Script,
+) -> Result<(), Error> {
+    let mut receipt = None;
+    for (index, type_hash) in QueryIter::new(load_cell_type_hash, Source::CellDep).enumerate() {
+        let Some(type_hash) = type_hash else {
+            continue;
+        };
+        let data =
+            load_cell_data(index, Source::CellDep).map_err(|_| Error::TerminalReceiptNotFound)?;
+        let Ok(result) = ResultData::decode(&data) else {
+            continue;
+        };
+        if result.proposal_id == proposal_id
+            && result.is_terminal_receipt()
+            && receipt.replace((type_hash, result)).is_some()
+        {
+            return Err(Error::TerminalReceiptNotFound);
+        }
+    }
+    let (receipt_type_hash, result) = receipt.ok_or(Error::TerminalReceiptNotFound)?;
+    for (index, _) in QueryIter::new(load_cell_type_hash, Source::CellDep).enumerate() {
+        let data = load_cell_data(index, Source::CellDep).map_err(|_| Error::ConfigInvalid)?;
+        if blake2b_256(&data) != result.proposal_config_data_hash {
+            continue;
+        }
+        let config = CountingConfig::decode(&data).map_err(|_| Error::ConfigInvalid)?;
+        if config.policy_type_hash != receipt_type_hash
+            || script.code_hash().as_slice() != config.counting_code_hash
+            || script.hash_type().as_slice()[0] != config.counting_hash_type
+        {
+            return Err(Error::ContractIdentityMismatch);
+        }
+        return Ok(());
+    }
+    Err(Error::ConfigNotFound)
 }
 
 fn load_proposal_and_config(

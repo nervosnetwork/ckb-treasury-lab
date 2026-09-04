@@ -12,7 +12,9 @@ use ckb_std::{
         load_cell_type_hash, load_header, load_input_out_point, load_script, load_transaction,
     },
 };
-use counting_common::{CountingConfig, OutPoint, ProposalData, ProposalPhase, VoteData};
+use counting_common::{
+    CountingConfig, OutPoint, ProposalData, ProposalPhase, ResultData, VoteData, blake2b_256,
+};
 
 #[repr(i8)]
 enum Error {
@@ -36,6 +38,7 @@ enum Error {
     ProposalCreationHeaderMissing,
     DaoCreationHeaderMissing,
     DaoDepositTooNew,
+    TerminalReceiptNotFound,
 }
 
 pub fn program_entry() -> i8 {
@@ -53,7 +56,10 @@ fn run() -> Result<(), Error> {
     let input_count = QueryIter::new(load_cell_type_hash, Source::GroupInput).count();
     let output_count = QueryIter::new(load_cell_type_hash, Source::GroupOutput).count();
     if input_count != 0 {
-        return Err(Error::EventImmutable);
+        if output_count != 0 {
+            return Err(Error::EventImmutable);
+        }
+        return cleanup(proposal_type_hash, &script);
     }
     if output_count != 1 {
         return Err(Error::MultipleVoteOutputs);
@@ -151,6 +157,45 @@ fn run() -> Result<(), Error> {
         return Err(Error::AmountBelowMinimum);
     }
     Ok(())
+}
+
+fn cleanup(
+    proposal_type_hash: [u8; 32],
+    script: &ckb_std::ckb_types::packed::Script,
+) -> Result<(), Error> {
+    let mut receipt = None;
+    for (index, type_hash) in QueryIter::new(load_cell_type_hash, Source::CellDep).enumerate() {
+        let Some(type_hash) = type_hash else {
+            continue;
+        };
+        let data =
+            load_cell_data(index, Source::CellDep).map_err(|_| Error::TerminalReceiptNotFound)?;
+        let Ok(result) = ResultData::decode(&data) else {
+            continue;
+        };
+        if result.proposal_id == proposal_type_hash
+            && result.is_terminal_receipt()
+            && receipt.replace((type_hash, result)).is_some()
+        {
+            return Err(Error::TerminalReceiptNotFound);
+        }
+    }
+    let (receipt_type_hash, result) = receipt.ok_or(Error::TerminalReceiptNotFound)?;
+    for (index, _) in QueryIter::new(load_cell_type_hash, Source::CellDep).enumerate() {
+        let data = load_cell_data(index, Source::CellDep).map_err(|_| Error::ConfigInvalid)?;
+        if blake2b_256(&data) != result.proposal_config_data_hash {
+            continue;
+        }
+        let config = CountingConfig::decode(&data).map_err(|_| Error::ConfigInvalid)?;
+        if config.policy_type_hash != receipt_type_hash
+            || script.code_hash().as_slice() != config.vote_code_hash
+            || script.hash_type().as_slice()[0] != config.vote_hash_type
+        {
+            return Err(Error::ContractIdentityMismatch);
+        }
+        return Ok(());
+    }
+    Err(Error::ConfigNotFound)
 }
 
 fn unpack_out_point(out_point: &ckb_std::ckb_types::packed::OutPoint) -> OutPoint {
