@@ -37,5 +37,7 @@ make build
 make test
 ```
 
+Run `e2e` tests only when requested.
+
 ## Small Changes
 Unless requested, don't add extra comments when adding small features or fixing bugs. 

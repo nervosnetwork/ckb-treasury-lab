@@ -33,6 +33,7 @@ export function registerConfigCommands(program: Command): void {
     .option("--vote-window <blocks>", "blocks a vote stays valid", "0")
     .option("--challenge-time <blocks>", "blocks before a proposal passes", "0")
     .option("--veto-lock <address>", "lock allowed to veto a proposal")
+    .option("--minimal-vote-amount <ckb>", "minimum vote amount", "0")
     .option("--capacity <ckb>", "capacity of the config cell")
     .option("--write <path>", "patch the config Type ID into this config file")
     .action(
@@ -48,6 +49,7 @@ export function registerConfigCommands(program: Command): void {
           voteWindow: options.voteWindow,
           challengeTime: options.challengeTime,
           vetoLock: options.vetoLock,
+          minimalVoteAmount: shannons(options.minimalVoteAmount),
           capacity: options.capacity ? shannons(options.capacity) : undefined,
         });
         if (options.write) {
@@ -89,6 +91,7 @@ export function registerConfigCommands(program: Command): void {
     .option("--vote-window <blocks>", "blocks a vote stays valid")
     .option("--challenge-time <blocks>", "blocks before a proposal passes")
     .option("--veto-lock <address>", "lock allowed to veto a proposal")
+    .option("--minimal-vote-amount <ckb>", "minimum vote amount")
     .option("--capacity <ckb>", "capacity of the config cell")
     .option("--write <path>", "patch the new config cell into this config file")
     .action(
@@ -110,6 +113,10 @@ export function registerConfigCommands(program: Command): void {
           voteWindow: options.voteWindow,
           challengeTime: options.challengeTime,
           vetoLock: options.vetoLock,
+          minimalVoteAmount:
+            options.minimalVoteAmount === undefined
+              ? undefined
+              : shannons(options.minimalVoteAmount),
           capacity: options.capacity ? shannons(options.capacity) : undefined,
         });
         if (options.write) {
@@ -156,6 +163,7 @@ export function registerConfigCommands(program: Command): void {
             `vote_window: ${info.data.voteWindow}`,
             `challenge_time: ${info.data.challengeTime}`,
             `veto_lock_script_hash: ${info.data.vetoLockScriptHash}`,
+            `minimal_vote_amount: ${info.data.minimalVoteAmount}`,
           ].join("\n"),
         );
       }),

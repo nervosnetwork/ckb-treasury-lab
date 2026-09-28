@@ -45,6 +45,7 @@ export const VotingConfigCodec = ccc.mol.table({
   voteWindow: ccc.mol.Uint64,
   challengeTime: ccc.mol.Uint64,
   vetoLockScriptHash: ccc.mol.Byte32,
+  minimalVoteAmount: ccc.mol.Uint64,
 });
 
 /** Decoded `VotingConfig` with `bigint` counters. */
@@ -62,6 +63,7 @@ export interface VotingConfig {
   voteWindow: bigint;
   challengeTime: bigint;
   vetoLockScriptHash: ccc.Hex;
+  minimalVoteAmount: bigint;
 }
 
 /** `table ProposalCellData` of the proposal / finalized / passed cell. */

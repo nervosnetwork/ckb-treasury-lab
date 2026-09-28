@@ -93,6 +93,8 @@ pub enum Error {
     VoteAmountMismatch = 66,
     /// More than one vote cell for the same proposal is created in one transaction.
     MultipleVoteCells = 67,
+    /// The declared `vote_amount` is below `config.minimal_vote_amount`.
+    VoteAmountTooSmall = 68,
 
     // -------------------------------------------------- counting type script
     /// The counting cell data is not a well formed `Counting`.

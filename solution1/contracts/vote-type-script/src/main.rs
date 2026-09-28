@@ -118,9 +118,12 @@ fn run() -> Result<(), Error> {
     // also points at the config cell, which every voting script has to consult:
     // it fails as soon as the system is halted.
     let proposal = proposal::find_proposal(&proposal_id)?;
-    config::ensure_running(&proposal.config_id)?;
+    let config = config::Config::load(&proposal.config_id)?;
     if proposal.status != status::PROPOSAL_STATUS_OPEN {
         return Err(Error::ProposalNotOpen);
+    }
+    if declared_amount < config.minimal_vote_amount {
+        return Err(Error::VoteAmountTooSmall);
     }
 
     // Only the `cell_deps` written down before the first dependency group are

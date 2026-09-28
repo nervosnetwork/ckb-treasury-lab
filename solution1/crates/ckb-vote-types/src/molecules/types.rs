@@ -1842,6 +1842,12 @@ impl ::core::fmt::Display for VotingConfig {
             "veto_lock_script_hash",
             self.veto_lock_script_hash()
         )?;
+        write!(
+            f,
+            ", {}: {}",
+            "minimal_vote_amount",
+            self.minimal_vote_amount()
+        )?;
         let extra_count = self.count_extra_fields();
         if extra_count != 0 {
             write!(f, ", .. ({} fields)", extra_count)?;
@@ -1856,17 +1862,18 @@ impl ::core::default::Default for VotingConfig {
     }
 }
 impl VotingConfig {
-    const DEFAULT_VALUE: [u8; 228] = [
-        228, 0, 0, 0, 56, 0, 0, 0, 57, 0, 0, 0, 89, 0, 0, 0, 90, 0, 0, 0, 122, 0, 0, 0, 123, 0, 0,
-        0, 155, 0, 0, 0, 156, 0, 0, 0, 164, 0, 0, 0, 172, 0, 0, 0, 180, 0, 0, 0, 188, 0, 0, 0, 196,
+    const DEFAULT_VALUE: [u8; 240] = [
+        240, 0, 0, 0, 60, 0, 0, 0, 61, 0, 0, 0, 93, 0, 0, 0, 94, 0, 0, 0, 126, 0, 0, 0, 127, 0, 0,
+        0, 159, 0, 0, 0, 160, 0, 0, 0, 168, 0, 0, 0, 176, 0, 0, 0, 184, 0, 0, 0, 192, 0, 0, 0, 200,
+        0, 0, 0, 232, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0,
     ];
-    pub const FIELD_COUNT: usize = 13;
+    pub const FIELD_COUNT: usize = 14;
     pub fn total_size(&self) -> usize {
         molecule::unpack_number(self.as_slice()) as usize
     }
@@ -1958,11 +1965,17 @@ impl VotingConfig {
     pub fn veto_lock_script_hash(&self) -> Byte32 {
         let slice = self.as_slice();
         let start = molecule::unpack_number(&slice[52..]) as usize;
+        let end = molecule::unpack_number(&slice[56..]) as usize;
+        Byte32::new_unchecked(self.0.slice(start..end))
+    }
+    pub fn minimal_vote_amount(&self) -> Uint64 {
+        let slice = self.as_slice();
+        let start = molecule::unpack_number(&slice[56..]) as usize;
         if self.has_extra_fields() {
-            let end = molecule::unpack_number(&slice[56..]) as usize;
-            Byte32::new_unchecked(self.0.slice(start..end))
+            let end = molecule::unpack_number(&slice[60..]) as usize;
+            Uint64::new_unchecked(self.0.slice(start..end))
         } else {
-            Byte32::new_unchecked(self.0.slice(start..))
+            Uint64::new_unchecked(self.0.slice(start..))
         }
     }
     pub fn as_reader<'r>(&'r self) -> VotingConfigReader<'r> {
@@ -2005,6 +2018,7 @@ impl molecule::prelude::Entity for VotingConfig {
             .vote_window(self.vote_window())
             .challenge_time(self.challenge_time())
             .veto_lock_script_hash(self.veto_lock_script_hash())
+            .minimal_vote_amount(self.minimal_vote_amount())
     }
 }
 #[derive(Clone, Copy)]
@@ -2069,6 +2083,12 @@ impl<'r> ::core::fmt::Display for VotingConfigReader<'r> {
             "veto_lock_script_hash",
             self.veto_lock_script_hash()
         )?;
+        write!(
+            f,
+            ", {}: {}",
+            "minimal_vote_amount",
+            self.minimal_vote_amount()
+        )?;
         let extra_count = self.count_extra_fields();
         if extra_count != 0 {
             write!(f, ", .. ({} fields)", extra_count)?;
@@ -2077,7 +2097,7 @@ impl<'r> ::core::fmt::Display for VotingConfigReader<'r> {
     }
 }
 impl<'r> VotingConfigReader<'r> {
-    pub const FIELD_COUNT: usize = 13;
+    pub const FIELD_COUNT: usize = 14;
     pub fn total_size(&self) -> usize {
         molecule::unpack_number(self.as_slice()) as usize
     }
@@ -2169,11 +2189,17 @@ impl<'r> VotingConfigReader<'r> {
     pub fn veto_lock_script_hash(&self) -> Byte32Reader<'r> {
         let slice = self.as_slice();
         let start = molecule::unpack_number(&slice[52..]) as usize;
+        let end = molecule::unpack_number(&slice[56..]) as usize;
+        Byte32Reader::new_unchecked(&self.as_slice()[start..end])
+    }
+    pub fn minimal_vote_amount(&self) -> Uint64Reader<'r> {
+        let slice = self.as_slice();
+        let start = molecule::unpack_number(&slice[56..]) as usize;
         if self.has_extra_fields() {
-            let end = molecule::unpack_number(&slice[56..]) as usize;
-            Byte32Reader::new_unchecked(&self.as_slice()[start..end])
+            let end = molecule::unpack_number(&slice[60..]) as usize;
+            Uint64Reader::new_unchecked(&self.as_slice()[start..end])
         } else {
-            Byte32Reader::new_unchecked(&self.as_slice()[start..])
+            Uint64Reader::new_unchecked(&self.as_slice()[start..])
         }
     }
 }
@@ -2236,6 +2262,7 @@ impl<'r> molecule::prelude::Reader<'r> for VotingConfigReader<'r> {
         Uint64Reader::verify(&slice[offsets[10]..offsets[11]], compatible)?;
         Uint64Reader::verify(&slice[offsets[11]..offsets[12]], compatible)?;
         Byte32Reader::verify(&slice[offsets[12]..offsets[13]], compatible)?;
+        Uint64Reader::verify(&slice[offsets[13]..offsets[14]], compatible)?;
         Ok(())
     }
 }
@@ -2254,9 +2281,10 @@ pub struct VotingConfigBuilder {
     pub(crate) vote_window: Uint64,
     pub(crate) challenge_time: Uint64,
     pub(crate) veto_lock_script_hash: Byte32,
+    pub(crate) minimal_vote_amount: Uint64,
 }
 impl VotingConfigBuilder {
-    pub const FIELD_COUNT: usize = 13;
+    pub const FIELD_COUNT: usize = 14;
     pub fn emergent_halt<T>(mut self, v: T) -> Self
     where
         T: ::core::convert::Into<Byte>,
@@ -2348,6 +2376,13 @@ impl VotingConfigBuilder {
         self.veto_lock_script_hash = v.into();
         self
     }
+    pub fn minimal_vote_amount<T>(mut self, v: T) -> Self
+    where
+        T: ::core::convert::Into<Uint64>,
+    {
+        self.minimal_vote_amount = v.into();
+        self
+    }
 }
 impl molecule::prelude::Builder for VotingConfigBuilder {
     type Entity = VotingConfig;
@@ -2367,6 +2402,7 @@ impl molecule::prelude::Builder for VotingConfigBuilder {
             + self.vote_window.as_slice().len()
             + self.challenge_time.as_slice().len()
             + self.veto_lock_script_hash.as_slice().len()
+            + self.minimal_vote_amount.as_slice().len()
     }
     fn write<W: molecule::io::Write>(&self, writer: &mut W) -> molecule::io::Result<()> {
         let mut total_size = molecule::NUMBER_SIZE * (Self::FIELD_COUNT + 1);
@@ -2397,6 +2433,8 @@ impl molecule::prelude::Builder for VotingConfigBuilder {
         total_size += self.challenge_time.as_slice().len();
         offsets.push(total_size);
         total_size += self.veto_lock_script_hash.as_slice().len();
+        offsets.push(total_size);
+        total_size += self.minimal_vote_amount.as_slice().len();
         writer.write_all(&molecule::pack_number(total_size as molecule::Number))?;
         for offset in offsets.into_iter() {
             writer.write_all(&molecule::pack_number(offset as molecule::Number))?;
@@ -2414,6 +2452,7 @@ impl molecule::prelude::Builder for VotingConfigBuilder {
         writer.write_all(self.vote_window.as_slice())?;
         writer.write_all(self.challenge_time.as_slice())?;
         writer.write_all(self.veto_lock_script_hash.as_slice())?;
+        writer.write_all(self.minimal_vote_amount.as_slice())?;
         Ok(())
     }
     fn build(&self) -> Self::Entity {

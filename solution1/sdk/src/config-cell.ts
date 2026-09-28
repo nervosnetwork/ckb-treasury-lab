@@ -44,6 +44,8 @@ export interface CreateConfigCellParams {
   vetoLock?: string | ccc.ScriptLike;
   /** The 32 byte hash of the veto lock, used instead of `vetoLock`. */
   vetoLockScriptHash?: ccc.HexLike;
+  /** Minimum `vote_amount` of a vote cell, in shannons. */
+  minimalVoteAmount?: bigint | number;
   /** Capacity of the config cell, in shannons; defaults to the minimum. */
   capacity?: bigint | number;
 }
@@ -69,6 +71,7 @@ export interface UpdateConfigCellParams {
   challengeTime?: bigint | number;
   vetoLock?: string | ccc.ScriptLike;
   vetoLockScriptHash?: ccc.HexLike;
+  minimalVoteAmount?: bigint | number;
   capacity?: bigint | number;
 }
 
@@ -101,6 +104,7 @@ function buildConfigData(
     voteWindow: BigInt(params.voteWindow ?? 0),
     challengeTime: BigInt(params.challengeTime ?? 0),
     vetoLockScriptHash,
+    minimalVoteAmount: BigInt(params.minimalVoteAmount ?? 0),
   };
 }
 
@@ -221,6 +225,10 @@ export async function updateConfigCell(
         ? current.data.challengeTime
         : BigInt(params.challengeTime),
     vetoLockScriptHash,
+    minimalVoteAmount:
+      params.minimalVoteAmount === undefined
+        ? current.data.minimalVoteAmount
+        : BigInt(params.minimalVoteAmount),
   });
 
   const capacity =
@@ -309,7 +317,8 @@ export async function checkDeployment(
         `challenge_time ${info.data.challengeTime}, ` +
         `yes_threshold ${info.data.yesThreshold}, ` +
         `vote_window ${info.data.voteWindow}, ` +
-        `minimal_proposal_capacity ${info.data.minimalProposalCapacity}`,
+        `minimal_proposal_capacity ${info.data.minimalProposalCapacity}, ` +
+        `minimal_vote_amount ${info.data.minimalVoteAmount}`,
     });
   } catch (error) {
     checks.push({

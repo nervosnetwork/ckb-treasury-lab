@@ -54,6 +54,8 @@ pub const FUNDING_CAPACITY: u64 = 1000 * ONE_CKB;
 pub const CERTIFICATE_CAPACITY: u64 = 200 * ONE_CKB;
 /// The default `vote_amount` of a vote cell and of the DAO deposit backing it.
 pub const VOTE_AMOUNT: u64 = 100 * ONE_CKB;
+/// `config.minimal_vote_amount` of the default fixture.
+pub const MINIMAL_VOTE_AMOUNT: u64 = VOTE_AMOUNT;
 /// The block that creates a proposal in the default fixture.
 pub const PROPOSAL_BLOCK: u64 = 100;
 /// The Type ID tail of the proposal script of the default fixture.
@@ -202,6 +204,8 @@ pub struct ConfigValues {
     pub challenge_time: u64,
     /// The full 32 byte ckb hash of the lock allowed to veto a proposal.
     pub veto_lock_script_hash: [u8; 32],
+    /// The minimum `vote_amount` a vote cell may declare.
+    pub minimal_vote_amount: u64,
 }
 
 impl Default for ConfigValues {
@@ -214,6 +218,7 @@ impl Default for ConfigValues {
             vote_window: VOTE_WINDOW,
             challenge_time: CHALLENGE_TIME,
             veto_lock_script_hash: [0u8; 32],
+            minimal_vote_amount: MINIMAL_VOTE_AMOUNT,
         }
     }
 }
@@ -490,6 +495,7 @@ impl Fixture {
             .vote_window(self.config.vote_window.to_le_bytes())
             .challenge_time(self.config.challenge_time.to_le_bytes())
             .veto_lock_script_hash(self.config.veto_lock_script_hash)
+            .minimal_vote_amount(self.config.minimal_vote_amount.to_le_bytes())
             .build()
             .as_slice()
             .to_vec()

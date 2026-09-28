@@ -154,6 +154,12 @@ export async function castVote(
         : "the voter has no DAO deposit to back the vote with",
     );
   }
+  if (voteAmount < info.data.minimalVoteAmount) {
+    throw new Error(
+      `the vote amount ${voteAmount} is below config.minimal_vote_amount ` +
+        `${info.data.minimalVoteAmount}`,
+    );
+  }
 
   const proposalId = scriptId(proposal.typeScript);
   const typeScript = voteTypeScript(config, proposalId);

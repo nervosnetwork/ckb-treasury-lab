@@ -51,6 +51,8 @@ pub struct Config {
     pub challenge_time: u64,
     /// The lock script hash allowed to veto a finalized proposal.
     pub veto_lock_script_hash: [u8; 32],
+    /// The minimum `vote_amount` (in shannons) a vote cell may declare.
+    pub minimal_vote_amount: u64,
 }
 
 impl Config {
@@ -71,6 +73,7 @@ impl Config {
             vote_window: u64_of(packed.vote_window()),
             challenge_time: u64_of(packed.challenge_time()),
             veto_lock_script_hash: byte32_of(packed.veto_lock_script_hash()),
+            minimal_vote_amount: u64_of(packed.minimal_vote_amount()),
         })
     }
 

@@ -71,8 +71,8 @@ maps to (see "Assertions").
   and its rejections (missing recipient output, output too small); challenge (`NO >= total_yes`), a
   challenge below the bar, veto, recycle and "recycle too early"; invalid status transitions.
 - **vote**: casting a vote against DAO deposits; every documented rejection (args length, direction,
-  zero amount, voter lock not unlocked, proposal missing/not open, amount mismatch, no deposit, deposit
-  created after the proposal); withdrawal (`0` outputs).
+  zero amount, voter lock not unlocked, proposal missing/not open, amount mismatch, amount below
+  `config.minimal_vote_amount`, no deposit, deposit created after the proposal); withdrawal (`0` outputs).
 - **counting**: creation aggregating vote cells; every documented rejection (malformed data, bad
   direction, `start_hash > end_hash`, proposal status, vote cell of another proposal, direction mismatch,
   lock hash outside the range, vote outside `vote_window`, amount mismatch, duplicate voter lock, no vote

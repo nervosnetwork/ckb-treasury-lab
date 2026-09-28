@@ -55,6 +55,7 @@ bun run src/cli/index.ts create-config \
   --config ../deployment/devnet.json --write ../deployment/devnet.json \
   --private-key-file pk \
   --minimal-proposal-capacity 200 --yes-threshold 100 \
+  --minimal-vote-amount 100 \
   --vote-duration 5 --vote-window 1000 --challenge-time 5
 
 # 4. A DAO deposit older than the proposal is what a vote is backed by.

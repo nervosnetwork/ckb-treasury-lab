@@ -34,6 +34,7 @@ table VotingConfig {
     vote_window: Uint64,
     challenge_time: Uint64,
     veto_lock_script_hash: Byte32,
+    minimal_vote_amount: Uint64,
 }
 ```
 

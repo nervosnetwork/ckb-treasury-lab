@@ -58,6 +58,8 @@ const CKB = 100_000_000n;
 const YES_THRESHOLD = 100n * CKB;
 /** Minimum bond of a proposal. */
 const MINIMAL_PROPOSAL_CAPACITY = 200n * CKB;
+/** Minimum `vote_amount` of a vote cell. */
+const MINIMAL_VOTE_AMOUNT = 100n * CKB;
 /** Capacity of the DAO deposit that backs the vote. */
 const DEPOSIT_AMOUNT = 1_000n * CKB;
 /** Grant requested by the proposal. */
@@ -417,6 +419,7 @@ async function runE2e(options: E2eOptions): Promise<void> {
     voteDuration: VOTE_DURATION,
     voteWindow: VOTE_WINDOW,
     challengeTime: CHALLENGE_TIME,
+    minimalVoteAmount: MINIMAL_VOTE_AMOUNT,
   });
   await waitForTransaction(client, configCell.txHash);
   patchConfigFile(configPath, {

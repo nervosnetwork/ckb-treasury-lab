@@ -92,8 +92,7 @@ It sums all "NO" values (called `total_no`) in the counting cells' cell data. Th
 
 The `status` field in input cell data should be `1`("finalized").
 
-When a challenge succeeds, the finalized proposal cell is consumed, and the challenger receives all assets in the proposal cell as an incentive.
-The receiver's lock script should be one of lock script used in counting cells.
+When a challenge succeeds, the finalized proposal cell is consumed and burned, and the challenger receives all assets in the proposal cell as an incentive. The receiver's lock script must be one of the lock scripts used in the counting cells. The script verifies that no output cell carries the same proposal type script.
 
 ### Recycling the Proposal Cell
 Once the sum of `config.vote_duration` and `config.challenge_time` (both block counts) has elapsed, the initiator can consume the proposal cell and recycle its assets if the proposal fails to pass.

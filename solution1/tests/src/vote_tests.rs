@@ -399,6 +399,20 @@ fn test_vote_amount_mismatch() {
     assert_script_error(&fixture.context, &tx, Error::VoteAmountMismatch);
 }
 
+/// Spec: vote, "Processing" - the `vote_amount` has to be greater than or equal
+/// to `config.minimal_vote_amount`. A vote of exactly the minimum is accepted
+/// by `test_cast_yes_vote`; one shannon below it is not.
+#[test]
+fn test_vote_amount_below_minimal() {
+    let mut fixture = Fixture::new();
+    fixture.config.minimal_vote_amount = VOTE_AMOUNT + 1;
+    fixture.refresh_config_cell();
+    let (proposal, plan) = vote_setup(&mut fixture);
+    let tx = vote_tx(&mut fixture, &proposal, &plan);
+
+    assert_script_error(&fixture.context, &tx, Error::VoteAmountTooSmall);
+}
+
 // --------------------------------------------------------------------------
 // Repeating a DAO deposit through a dependency group
 // --------------------------------------------------------------------------
