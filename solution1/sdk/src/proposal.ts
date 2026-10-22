@@ -8,7 +8,7 @@
 
 import { ccc } from "@ckb-ccc/shell";
 import type { DeploymentConfig } from "./config.js";
-import { feeRateOf } from "./config.js";
+import { feeRateOf } from "./fee.js";
 import { Direction, ProposalStatus } from "./constants.js";
 import { encodeProposalCellData, type ProposalCellData } from "./codec.js";
 import {

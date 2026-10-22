@@ -16,6 +16,7 @@ import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { ccc } from "@ckb-ccc/shell";
 import { HASH_TYPE_BYTES, MAX_HASH_TYPE_BYTE } from "./constants.js";
+export { feeRateOf } from "./fee.js";
 
 /** The five scripts a deployment is made of. */
 export type ScriptKey =
@@ -212,11 +213,6 @@ export function parseConfig(
 export function loadConfig(path?: string): DeploymentConfig {
   const resolved = resolveConfigPath(path);
   return parseConfig(JSON.parse(readFileSync(resolved, "utf8")), resolved);
-}
-
-/** Fee rate of the config, in shannons per KB. */
-export function feeRateOf(config: DeploymentConfig): bigint {
-  return BigInt(config.feeRate ?? 1500);
 }
 
 /** What is needed before the voting contracts exist: a node and its genesis. */

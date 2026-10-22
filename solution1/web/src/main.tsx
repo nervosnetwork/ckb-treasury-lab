@@ -63,7 +63,7 @@ function App() {
   const t = (key: Parameters<typeof translate>[1], variables?: Record<string, string | number>) => translate(language, key, variables);
   const [page, setPage] = useState<Page>("overview");
   const { open, disconnect: disconnectConnector, signerInfo } = connector.useCcc();
-  const [walletSource, setWalletSource] = useState<"ckb-tw" | "ccc">("ccc");
+  const [walletSource, setWalletSource] = useState<"ckb-tw" | "ccc">(() => localStorage.getItem("walletSource") === "ckb-tw" ? "ckb-tw" : "ccc");
   const [account, setAccount] = useState<WalletAccount | null>(null);
   const [connecting, setConnecting] = useState(false);
   const walletDialog = useRef<HTMLDialogElement>(null);
@@ -115,10 +115,20 @@ function App() {
 
   function acceptAccount(next: WalletAccount) {
     setAccount(next);
+    localStorage.setItem("walletSource", next.signer instanceof WalletSigner ? "ckb-tw" : "ccc");
     setNotice(null);
     if (destinationAfterConnect.current) setPage(destinationAfterConnect.current);
     destinationAfterConnect.current = undefined;
     walletDialog.current?.close();
+  }
+
+  async function getCkbTwAccount(): Promise<WalletAccount> {
+    const address = await connectWallet();
+    if (!address.startsWith("ckt")) throw new Error(t("wrongNetwork", { network: t(network === "testnet" ? "testnet" : "developNet") }));
+    const { script } = await ccc.Address.fromString(address, client);
+    const secp = await ccc.Script.fromKnownScript(client, ccc.KnownScript.Secp256k1Blake160, script.args);
+    if (!script.eq(secp)) throw new Error(t("unsupportedAccount"));
+    return { signer: new WalletSigner(client, address, script), address, lock: script };
   }
 
   useEffect(() => {
@@ -136,19 +146,26 @@ function App() {
     return () => { connectionAttempt.current++; };
   }, [connectorSigner, walletSource]);
 
+  useEffect(() => {
+    if (walletSource !== "ckb-tw" || account) return;
+    const attempt = ++connectionAttempt.current;
+    void getCkbTwAccount().then((restored) => {
+      if (attempt === connectionAttempt.current) setAccount(restored);
+    }).catch((error) => {
+      if (attempt === connectionAttempt.current) setNotice({ text: String(error), error: true });
+    });
+    return () => { connectionAttempt.current++; };
+  }, [walletSource, account]);
+
   async function connectCkbTw() {
     const attempt = ++connectionAttempt.current;
     setConnecting(true);
     try {
-      const account = await connectWallet();
-      if (!account.startsWith("ckt")) throw new Error(t("wrongNetwork", { network: t(network === "testnet" ? "testnet" : "developNet") }));
-      const { script } = await ccc.Address.fromString(account, client);
-      const secp = await ccc.Script.fromKnownScript(client, ccc.KnownScript.Secp256k1Blake160, script.args);
-      if (!script.eq(secp)) throw new Error(t("unsupportedAccount"));
+      const nextAccount = await getCkbTwAccount();
       if (attempt !== connectionAttempt.current) return;
       disconnectConnector();
       setWalletSource("ckb-tw");
-      acceptAccount({ signer: new WalletSigner(client, account, script), address: account, lock: script });
+      acceptAccount(nextAccount);
     } catch (error) {
       if (attempt === connectionAttempt.current) setNotice({ text: String(error), error: true });
     } finally {
@@ -161,6 +178,7 @@ function App() {
     disconnectConnector();
     setAccount(null);
     setWalletSource("ccc");
+    localStorage.setItem("walletSource", "ccc");
     walletDialog.current?.close();
     open();
   }
@@ -187,6 +205,7 @@ function App() {
     connectionAttempt.current++;
     disconnectConnector();
     setAccount(null);
+    localStorage.removeItem("walletSource");
     destinationAfterConnect.current = undefined;
     walletDialog.current?.close();
   }
@@ -231,7 +250,7 @@ function App() {
 
   const settings = snapshot?.settings.data;
   const tip = snapshot?.tip ?? 0n;
-  const proposals = snapshot?.proposals ?? [];
+  const proposals = [...(snapshot?.proposals ?? [])].sort((a, b) => a.origin > b.origin ? -1 : a.origin < b.origin ? 1 : 0);
   const recipientHash = lock ? blake160(lock.toBytes()) : null;
   const active = proposals.filter((p) => p.data.status === 0 && settings && tip < p.origin + settings.voteWindow);
   const mine = proposals.filter((p) => owned(p) || (p.data.status === 1 && p.data.recipientLockHash === recipientHash));

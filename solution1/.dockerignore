@@ -1,0 +1,7 @@
+.git
+**/.git
+**/node_modules
+**/dist
+**/target
+**/build
+solution1/devnet/data
