@@ -75,9 +75,9 @@ def smoking():
             '--minimal-proposal-capacity 200',
             '--yes-threshold 100',
             '--minimal-vote-amount 100',
-            '--vote-duration 5',
-            '--vote-window 1000',
-            '--challenge-time 5',
+            '--vote-duration 10',
+            '--vote-window 10',
+            '--challenge-time 10',
         ]))
         time.sleep(20)
         proposal = bash_output(' '.join([

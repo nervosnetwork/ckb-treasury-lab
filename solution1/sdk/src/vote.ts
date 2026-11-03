@@ -192,11 +192,11 @@ export async function castVote(
     );
   }
 
-  await tx.completeFeeBy(signer, feeRateOf(config));
   // Completing the fee may have appended the signer's lock dependency, which
   // is a dependency group on a public chain. The contract only counts the DAO
   // deposits written before the first group, so put them back in front.
   prioritizeCellDeps(tx, deposits);
+  await tx.completeFeeBy(signer, feeRateOf(config));
   const txHash = await signer.sendTransaction(tx);
 
   return {
