@@ -5,7 +5,7 @@
     "": {
       "name": "@ckb-vote/sdk",
       "dependencies": {
-        "@ckb-ccc/shell": "^1.3.12",
+        "@ckb-ccc/shell": "^1.3.15",
         "commander": "^12.1.0",
       },
       "devDependencies": {
@@ -18,19 +18,19 @@
   "packages": {
     "@adraffy/ens-normalize": ["@adraffy/ens-normalize@1.11.1", "", {}, "sha512-nhCBV3quEgesuf7c7KYfperqSS14T8bYuvJ8PcLJp6znkZpFc0AuW4qBtr8eKVyPPe/8RSr7sglCWPU5eaxwKQ=="],
 
-    "@ckb-ccc/core": ["@ckb-ccc/core@1.21.0", "", { "dependencies": { "@joyid/ckb": "^1.1.4", "@noble/ciphers": "^2.2.0", "@noble/curves": "^2.2.0", "@noble/hashes": "^2.2.0", "bech32": "^2.0.0", "bs58check": "^4.0.0", "ethers": "^6.17.0", "isomorphic-ws": "^5.0.0", "uint8array-extras": "^1.5.0", "ws": "^8.21.0" } }, "sha512-Rary1VryrpbS4kYGwi/JEOD9ER+9mak+m2uJutsCzRRjNYx+rdzQfjnsDDQ+2Pno37prfAarByNEQhhHK9VEnw=="],
+    "@ckb-ccc/core": ["@ckb-ccc/core@1.23.0", "", { "dependencies": { "@joyid/ckb": "^1.1.4", "@noble/ciphers": "^2.2.0", "@noble/curves": "^2.2.0", "@noble/hashes": "^2.2.0", "bech32": "^2.0.0", "bs58check": "^4.0.0", "ethers": "^6.17.0", "isomorphic-ws": "^5.0.0", "uint8array-extras": "^1.5.0", "ws": "^8.21.0" } }, "sha512-lYCEgsONTqhOBfdqJERtsO1uZbydTn8SR7og1mEhVKSOpdSCc3P6D5SSWYnTL37m3+HLYhW/luA2pOcZkZhhjw=="],
 
-    "@ckb-ccc/did-ckb": ["@ckb-ccc/did-ckb@0.2.12", "", { "dependencies": { "@ckb-ccc/core": "1.21.0", "@ckb-ccc/type-id": "0.1.12", "@ipld/dag-cbor": "^10.0.1", "@noble/curves": "^2.2.0" } }, "sha512-g3gqIAgTp9CyuzQf5F2CPhdIMuyjJW+aCsonvqDrVwuWvwH0Z/B8DBAnDWE3SGRXTqVCnuv1Ng71HskNW2RITw=="],
+    "@ckb-ccc/did-ckb": ["@ckb-ccc/did-ckb@0.2.15", "", { "dependencies": { "@ckb-ccc/core": "1.23.0", "@ckb-ccc/type-id": "0.1.15", "@ipld/dag-cbor": "^10.0.1", "@noble/curves": "^2.2.0" } }, "sha512-B2Yz5pj60ddY4KH+HppOM1jvWDYBJcwqvsr6yCObpoPcDS5BZi+MnyYZONDg07T+s0IDF/kzDtLxHD1QAGXHbg=="],
 
-    "@ckb-ccc/shell": ["@ckb-ccc/shell@1.3.12", "", { "dependencies": { "@ckb-ccc/core": "1.21.0", "@ckb-ccc/did-ckb": "0.2.12", "@ckb-ccc/spore": "1.6.12", "@ckb-ccc/ssri": "0.4.2", "@ckb-ccc/type-id": "0.1.12", "@ckb-ccc/udt": "0.2.12" } }, "sha512-cttJNHOd+/bKP3pETOoqv5dVpSIE1vLEYnkC3MeRDCtnH67ig++4VMd/EGmnpraBpLCJyS9FxXSKv52gkaOHbg=="],
+    "@ckb-ccc/shell": ["@ckb-ccc/shell@1.3.15", "", { "dependencies": { "@ckb-ccc/core": "1.23.0", "@ckb-ccc/did-ckb": "0.2.15", "@ckb-ccc/spore": "1.6.15", "@ckb-ccc/ssri": "0.4.5", "@ckb-ccc/type-id": "0.1.15", "@ckb-ccc/udt": "0.2.15" } }, "sha512-zXKbLEJpJjEIR6EJq9a2Mj6mLSaqKqpzXwotDqvRUlhCFwtIbWUWIP/TfQ4SNQKrPAuK0ilKTSbIc2UAT/ExaA=="],
 
-    "@ckb-ccc/spore": ["@ckb-ccc/spore@1.6.12", "", { "dependencies": { "@ckb-ccc/core": "1.21.0", "axios": "^1.18.0" } }, "sha512-AlGOyJB0oX5z9xIygJN3ceV8SXCGOUs5jDzYlfVMlgya59Vb9WCDjWynxRz2/jodm65Ekn+ICtVr/8bOxVWRXg=="],
+    "@ckb-ccc/spore": ["@ckb-ccc/spore@1.6.15", "", { "dependencies": { "@ckb-ccc/core": "1.23.0", "axios": "^1.18.0" } }, "sha512-baLLgBG8AN7QLif9pwnon7r5eivqIh1wY1Lbijiys8F2GkyU3eFyusNUFecFqLLvhYCHPauyqQloD78tZBCk0w=="],
 
-    "@ckb-ccc/ssri": ["@ckb-ccc/ssri@0.4.2", "", { "dependencies": { "@ckb-ccc/core": "1.21.0" } }, "sha512-VP9VeTyd9r+16XFxtoANEd7MKzKcUZ/C4Y1jyegtbeySL/R5/u22OLBCJMsGpFyq4Rhd/iq+H6ptOfrTjyfHdw=="],
+    "@ckb-ccc/ssri": ["@ckb-ccc/ssri@0.4.5", "", { "dependencies": { "@ckb-ccc/core": "1.23.0" } }, "sha512-7Ixi3NoAo2Pqm0D1E4vVcSieqO4inBhrc4rsZapiCdycMALN+vGQlzQ4H2+J+78SNJx5MYzdJmZsb3lLldMPYA=="],
 
-    "@ckb-ccc/type-id": ["@ckb-ccc/type-id@0.1.12", "", { "dependencies": { "@ckb-ccc/core": "1.21.0" } }, "sha512-qd7PS9//PfOfewzAwcs6ZuCOrs+UNdIPEvL0AqB1c+tHTLAVk98Dq4CdDN+SdWbvdNiTWKkXINRcceJ1pEfaoQ=="],
+    "@ckb-ccc/type-id": ["@ckb-ccc/type-id@0.1.15", "", { "dependencies": { "@ckb-ccc/core": "1.23.0" } }, "sha512-x1DbaAnq+NcxSGaeYNbGt5fXgjbV84bmtIHbd0RdTixchxvgpenhPDpqLZS/jIWW40R5BR5HiTn5HW/n8zWwDA=="],
 
-    "@ckb-ccc/udt": ["@ckb-ccc/udt@0.2.12", "", { "dependencies": { "@ckb-ccc/core": "1.21.0", "@ckb-ccc/ssri": "0.4.2" } }, "sha512-iI6IfayyTDPcTTVQ8VQqMwWTdBkW67RAvVxEIU9fzCgzkddNAzx1t+NjbShISQuO+ypme1UFiPvvQLe1TL0qlw=="],
+    "@ckb-ccc/udt": ["@ckb-ccc/udt@0.2.15", "", { "dependencies": { "@ckb-ccc/core": "1.23.0", "@ckb-ccc/ssri": "0.4.5" } }, "sha512-W8Vhfv0l1BhKyYm+FEJ5UUyp/S2ol1IMKCN4DJJMn3aF1sRaYtCXWYI87JITpXlI3mkAj6MAw5vaaxb8HnHepQ=="],
 
     "@ipld/dag-cbor": ["@ipld/dag-cbor@10.0.2", "", { "dependencies": { "cborg": "^6.1.1", "multiformats": "^14.0.0" } }, "sha512-1eCD4YMTlkx5i36oQUmeAojLS/wu+XCd1Gs31BA0afk0TaVkhnyMofIAT/pi0wV3HS3/G7QSN/1NibhiksMyZQ=="],
 
