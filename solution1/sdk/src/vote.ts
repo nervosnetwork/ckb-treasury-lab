@@ -9,7 +9,7 @@ import type { DeploymentConfig } from "./config.js";
 import { feeRateOf } from "./fee.js";
 import { Direction, ProposalStatus, parseDirection } from "./constants.js";
 import { encodeVote } from "./codec.js";
-import { getProposalCell, loadConfigCell } from "./query.js";
+import { findVoteCells, getProposalCell, loadConfigCell } from "./query.js";
 import {
   addHeaderDeps,
   addUniqueCellDeps,
@@ -37,6 +37,12 @@ export interface CastVoteParams {
   deposits?: ccc.OutPointLike[];
   /** The voter's lock; defaults to the signer's lock. */
   lock?: string | ccc.ScriptLike;
+  /**
+   * Reject a live vote from the same voter on the same proposal with the same
+   * direction and amount. Disabled by default; the web UI enables it as a
+   * guard against a repeat submission the page has not displayed yet.
+   */
+  checkExistingVote?: boolean;
 }
 
 /** The result of {@link castVote}. */
@@ -50,6 +56,37 @@ export interface CastVoteResult {
   deposits: ccc.OutPointLike[];
   /** Deposits that were skipped because they are newer than the proposal. */
   skipped: ccc.OutPointLike[];
+}
+
+/**
+ * Throws when `lock` already has a live vote on `proposalId` with the same
+ * direction and amount.
+ *
+ * This is a best-effort client-side guard: a concurrent transaction can still
+ * slip between the check and the broadcast.
+ */
+async function assertNoEqualVote(
+  client: ccc.Client,
+  config: DeploymentConfig,
+  proposalId: ccc.Hex,
+  lock: ccc.Script,
+  direction: Direction,
+  voteAmount: bigint,
+): Promise<void> {
+  for await (const vote of findVoteCells(client, config, { proposalId })) {
+    if (
+      !vote.cell.cellOutput.lock.eq(lock) ||
+      vote.data.direction !== direction ||
+      vote.data.voteAmount !== voteAmount
+    ) {
+      continue;
+    }
+    throw new Error(
+      `a live vote already exists at ${formatOutPoint(vote.cell.outPoint)} ` +
+        `with the same direction and amount (${voteAmount} shannons); ` +
+        `withdraw it before voting again`,
+    );
+  }
 }
 
 /**
@@ -162,6 +199,9 @@ export async function castVote(
   }
 
   const proposalId = scriptId(proposal.typeScript);
+  if (params.checkExistingVote) {
+    await assertNoEqualVote(client, config, proposalId, lock, direction, voteAmount);
+  }
   const typeScript = voteTypeScript(config, proposalId);
   const data = encodeVote({ voteAmount, direction });
 
@@ -197,6 +237,9 @@ export async function castVote(
   // is a dependency group on a public chain. The contract only counts the DAO
   // deposits written before the first group, so put them back in front.
   prioritizeCellDeps(tx, deposits);
+  if (params.checkExistingVote) {
+    await assertNoEqualVote(client, config, proposalId, lock, direction, voteAmount);
+  }
   const txHash = await signer.sendTransaction(tx);
 
   return {

@@ -10,6 +10,7 @@ import { blake160, requireCellHeader, waitForTransaction } from "../../sdk/src/u
 import { client, config, fetchSnapshot, network, rpcPort, type ProposalView } from "./chain";
 import { connectWallet, WalletSigner } from "./wallet";
 import { currentLanguage, translate, type Language, type TranslationKey } from "./i18n";
+import { clearPendingVotes, loadPendingVotes, pendingVoteKey, savePendingVote, subscribePendingVotes, type PendingVotes } from "./pending";
 import "./style.css";
 
 type Page = "overview" | "voter" | "initiator" | "challenger";
@@ -83,6 +84,7 @@ function App() {
   const [recipient, setRecipient] = useState("");
   const [voteChoice, setVoteChoice] = useState<"yes" | "no">("yes");
   const [checkedProposal, setCheckedProposal] = useState<string | null>(null);
+  const [pendingVotes, setPendingVotes] = useState<PendingVotes>(() => loadPendingVotes());
 
   useEffect(() => {
     document.documentElement.lang = language;
@@ -107,6 +109,35 @@ function App() {
     const timer = setInterval(() => { void refresh(false); }, 12000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => subscribePendingVotes(() => setPendingVotes(loadPendingVotes())), []);
+
+  useEffect(() => {
+    if (!snapshot || Object.keys(pendingVotes).length === 0) return;
+    const settled = Object.entries(pendingVotes)
+      .filter(([, record]) => snapshot.proposals.some((proposal) =>
+        proposal.votes.some((vote) => vote.cell.outPoint.txHash.toLowerCase() === record.txHash.toLowerCase())))
+      .map(([key]) => key);
+    if (settled.length > 0) {
+      setPendingVotes(clearPendingVotes(settled));
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      for (const [key, record] of Object.entries(pendingVotes)) {
+        try {
+          const response = await client.getTransaction(record.txHash);
+          if (cancelled) return;
+          if (response?.status === "rejected" || (!response && Date.now() - record.createdAt > 10 * 60_000)) {
+            setPendingVotes(clearPendingVotes([key]));
+          }
+        } catch {
+          // Keep the record; the next snapshot refresh retries.
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [snapshot, pendingVotes]);
 
   function connect(destination?: Page) {
     destinationAfterConnect.current = destination;
@@ -264,6 +295,8 @@ function App() {
     const { cell, data, origin, votes, counting } = proposal;
     const key = cell.outPoint.txHash;
     const myVote = votes.find((vote) => lock?.eq(vote.cell.cellOutput.lock));
+    const pendingKey = lock ? pendingVoteKey(network, proposal.id, lock.hash()) : null;
+    const pending = pendingKey ? pendingVotes[pendingKey] : null;
     const direction = mode === "challenger" ? 0 : 1;
     const matching = nonOverlappingCounting(counting.filter((entry) => entry.data.direction === direction && lock?.eq(entry.cell.cellOutput.lock)));
     const counted = matching.reduce((sum, entry) => sum + entry.data.voteAmount, 0n);
@@ -303,7 +336,19 @@ function App() {
       <div className="proposal-actions">
         {mode === "voter" && voteOpen && (myVote
           ? actionButton("withdrawVote", `${key}-withdraw`, (s) => withdrawVote(s, config, { voteOutPoint: myVote.cell.outPoint }))
-          : <div className="vote-controls"><div className="segmented"><button className={voteChoice === "yes" ? "selected" : ""} onClick={() => setVoteChoice("yes")}><ThumbsUp size={15}/> {t("yes")}</button><button className={voteChoice === "no" ? "selected" : ""} onClick={() => setVoteChoice("no")}><ThumbsDown size={15}/> {t("no")}</button></div>{actionButton("castVote", `${key}-vote`, async (s) => (await castVote(s, config, { proposalOutPoint: cell.outPoint, direction: voteChoice })).txHash, false, "button-primary")}</div>)}
+          : pending
+            ? <div className="vote-record" role="status"><LoaderCircle className="spin" size={16}/><span>{t("votePending")}</span><span className="muted mono" title={pending.txHash}>{short(pending.txHash)}</span></div>
+            : <div className="vote-controls"><div className="segmented"><button className={voteChoice === "yes" ? "selected" : ""} onClick={() => setVoteChoice("yes")}><ThumbsUp size={15}/> {t("yes")}</button><button className={voteChoice === "no" ? "selected" : ""} onClick={() => setVoteChoice("no")}><ThumbsDown size={15}/> {t("no")}</button></div>{actionButton("castVote", `${key}-vote`, async (s) => {
+                const result = await castVote(s, config, { proposalOutPoint: cell.outPoint, direction: voteChoice, checkExistingVote: true });
+                if (lock) {
+                  try {
+                    setPendingVotes(savePendingVote({ network, proposalId: proposal.id, voterLock: lock.hash(), txHash: result.txHash, direction: voteChoice, amount: result.voteAmount.toString(), createdAt: Date.now() }));
+                  } catch {
+                    // The vote is already broadcast; a storage failure must not hide it.
+                  }
+                }
+                return result.txHash;
+              }, false, "button-primary")}</div>)}
         {mode === "initiator" && data.status === 0 && <>
           <button className="button-secondary" aria-expanded={checkedProposal === proposal.id} onClick={() => setCheckedProposal((current) => current === proposal.id ? null : proposal.id)}>{t("checkPass")}</button>
           {actionButton("countYes", `${key}-count-yes`, async (s) => (await createCountingCell(s, config, { proposalOutPoint: cell.outPoint, direction: "yes", startHash: 0, endHash: 65535 })).txHash, !canCount || !hasYesVotes || counted >= threshold || hasFullRangeCounting)}
