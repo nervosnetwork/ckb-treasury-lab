@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowRight, ArrowUpRight, Check, ChevronRight, CircleHelp, Clock3, ExternalLink, LayoutDashboard, LoaderCircle, LogOut, Plus, QrCode, RefreshCw, ShieldCheck, ThumbsDown, ThumbsUp, Vote, Wallet, X } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Check, ChevronRight, CircleHelp, Clock3, Copy, ExternalLink, LayoutDashboard, LoaderCircle, LogOut, Plus, QrCode, RefreshCw, ShieldCheck, ThumbsDown, ThumbsUp, Vote, Wallet, X } from "lucide-react";
 import { ccc } from "@ckb-ccc/shell";
 import { ccc as connector } from "@ckb-ccc/connector-react";
 import { castVote, withdrawVote } from "../../sdk/src/vote";
@@ -111,6 +111,17 @@ function App() {
   function connect(destination?: Page) {
     destinationAfterConnect.current = destination;
     walletDialog.current?.showModal();
+  }
+
+  async function copyAddress() {
+    try {
+      if (!address) throw new Error(t("walletRequired"));
+      if (!navigator.clipboard?.writeText) throw new Error(t("clipboardUnavailable"));
+      await navigator.clipboard.writeText(address);
+      setNotice({ text: t("addressCopied"), error: false });
+    } catch (error) {
+      setNotice({ text: t("copyAddressFailed", { error: String(error) }), error: true });
+    }
   }
 
   function acceptAccount(next: WalletAccount) {
@@ -366,7 +377,7 @@ function App() {
       <div className="sidebar-bottom"><span className="network-dot"/> {t(network === "testnet" ? "testnet" : "developNet")} {rpcPort && <span className="mono">:{rpcPort}</span>}<p>{t(network === "testnet" ? "testNetwork" : "localNetwork")}</p></div>
     </aside>
     <div className="workspace">
-      <header className="topbar"><div className="breadcrumb">CKB Treasury <ChevronRight size={14}/> {t(page)}</div><div className="top-actions"><span className="top-network"><span className="network-dot"/> {t(network === "testnet" ? "testnet" : "developNet")}</span><label className="language-control"><span>{t("languageLabel")}</span><select aria-label={t("languageLabel")} value={language} onChange={(event) => { setLanguage(event.target.value as Language); setNotice(null); }}><option value="en-US">{t("english")}</option><option value="zh-CN">{t("chinese")}</option></select></label><button className="icon-button" title={t("refresh")} aria-label={t("refresh")} onClick={() => void refresh()}><RefreshCw size={17} className={loading ? "spin" : ""}/></button><button className="wallet-button" title={address || t("connectWallet")} onClick={() => void connect()}><Wallet size={16}/>{address ? short(address, 9, 5) : t("connectWallet")}</button></div></header>
+      <header className="topbar"><div className="breadcrumb">CKB Treasury <ChevronRight size={14}/> {t(page)}</div><div className="top-actions"><span className="top-network"><span className="network-dot"/> {t(network === "testnet" ? "testnet" : "developNet")}</span><label className="language-control"><span>{t("languageLabel")}</span><select aria-label={t("languageLabel")} value={language} onChange={(event) => { setLanguage(event.target.value as Language); setNotice(null); }}><option value="en-US">{t("english")}</option><option value="zh-CN">{t("chinese")}</option></select></label><button className="icon-button" title={t("refresh")} aria-label={t("refresh")} onClick={() => void refresh()}><RefreshCw size={17} className={loading ? "spin" : ""}/></button><button className="wallet-button" title={address || t("connectWallet")} onClick={() => void connect()}><Wallet size={16}/>{address ? short(address, 9, 5) : t("connectWallet")}</button>{address && <button className="icon-button" title={t("copyAddress")} aria-label={t("copyAddress")} onClick={() => void copyAddress()}><Copy size={16}/></button>}</div></header>
       <main>
         {notice && <div className={`notice ${notice.error ? "error" : ""}`} role="status"><span>{notice.text}</span><button title={t("closeNotice")} aria-label={t("closeNotice")} onClick={() => setNotice(null)}><X size={16}/></button></div>}
         {page === "overview" && <>
