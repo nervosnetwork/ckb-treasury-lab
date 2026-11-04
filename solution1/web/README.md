@@ -6,6 +6,8 @@ A React application built with Bun and Vite on top of the voting SDK in `../sdk`
 
 Choose **Connect wallet**, then **ckb-tw** for the browser extension or **CCC / Khie** for the CCC wallet selector. Choose **Khie** there to pair by QR code or pairing link. Reopen the wallet menu to disconnect or switch wallets.
 
+Once connected, use the copy icon beside the shortened address in the top-right corner to copy the full CKB address. A message confirms success or reports a clipboard error. Clipboard access requires HTTPS or localhost and browser permission.
+
 The selected wallet connection is restored after a page refresh when the wallet remains available and authorized. Disconnecting clears the saved selection.
 
 The connector uses the selected deployment's network and RPC. Khie wallets must support CKB transaction signing and the account's lock on that network. Voting requires eligible DAO deposits under the same account lock and funds for transaction fees. Devnet wallets must also support that devnet's deployed lock scripts.
