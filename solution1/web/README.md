@@ -12,6 +12,8 @@ The selected wallet connection is restored after a page refresh when the wallet 
 
 The connector uses the selected deployment's network and RPC. Khie wallets must support CKB transaction signing and the account's lock on that network. Voting requires eligible DAO deposits under the same account lock and funds for transaction fees. Devnet wallets must also support that devnet's deployed lock scripts.
 
+Vote and withdrawal submissions show a spinning pending indicator and disable repeat submission, including after a page reload. Withdrawal stays pending until the transaction is confirmed and the spent vote disappears from the chain snapshot, or the transaction is rejected.
+
 `@ckb-ccc/connector-react` is pinned to `2.1.3` (Connector `2.2.1`) to share CCC core `1.21.0` with the SDK's shell `1.3.12`. Update these packages together to avoid incompatible signer/client classes.
 
 ## Network Selection

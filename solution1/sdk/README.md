@@ -101,7 +101,7 @@ cd sdk
 bun run src/cli/index.ts e2e
 ```
 
-It deploys the five contracts then runs `create-proposal -> vote -> create-counting -> finalize-proposal -> pass-proposal`. 
+It deploys the five contracts then runs `create-proposal -> vote -> create-counting -> finalize-proposal -> pass-proposal`.
 
 The deployment config it writes (and uses) is `./devnet.config`; `--config` / `--rpc-url` override the defaults.
 

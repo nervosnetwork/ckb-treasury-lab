@@ -9,7 +9,7 @@ import type { DeploymentConfig } from "./config.js";
 import { feeRateOf } from "./fee.js";
 import { Direction, ProposalStatus, parseDirection } from "./constants.js";
 import { encodeVote } from "./codec.js";
-import { getProposalCell, loadConfigCell } from "./query.js";
+import { findVoteCells, getProposalCell, loadConfigCell } from "./query.js";
 import {
   addHeaderDeps,
   addUniqueCellDeps,
@@ -37,6 +37,8 @@ export interface CastVoteParams {
   deposits?: ccc.OutPointLike[];
   /** The voter's lock; defaults to the signer's lock. */
   lock?: string | ccc.ScriptLike;
+  /** Reject an existing live vote by this voter for this proposal. Defaults to false. */
+  preventDuplicate?: boolean;
 }
 
 /** The result of {@link castVote}. */
@@ -197,6 +199,16 @@ export async function castVote(
   // deposits written before the first group, so put them back in front.
   prioritizeCellDeps(tx, deposits);
   await tx.completeFeeBy(signer, feeRateOf(config));
+  if (params.preventDuplicate) {
+    for await (const vote of findVoteCells(client, config, { proposalId })) {
+      if (vote.cell.cellOutput.lock.eq(lock) && await client.getCellLive(vote.cell.outPoint)) {
+        throw new Error(
+          `the voter already has a live vote for proposal ${proposalId}; ` +
+            `withdraw the existing vote before voting again`,
+        );
+      }
+    }
+  }
   const txHash = await signer.sendTransaction(tx);
 
   return {

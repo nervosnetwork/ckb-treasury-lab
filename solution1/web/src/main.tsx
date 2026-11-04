@@ -17,6 +17,11 @@ type Snapshot = Awaited<ReturnType<typeof fetchSnapshot>>;
 type WalletAccount = { signer: ccc.Signer; address: string; lock: ccc.Script };
 const walletNetworks = [{ name: network === "testnet" ? "Testnet" : "Develop", client }];
 const SHANNONS = 100_000_000n;
+const pendingVotePrefix = `pending-vote:${network}:${config.scripts.vote.codeHash}:`;
+
+function pendingVoteKey(proposalId: string, lock: ccc.Script) {
+  return `${pendingVotePrefix}${proposalId}:${lock.hash()}`;
+}
 
 function ckb(amount: bigint): string {
   const whole = amount / SHANNONS;
@@ -83,6 +88,19 @@ function App() {
   const [recipient, setRecipient] = useState("");
   const [voteChoice, setVoteChoice] = useState<"yes" | "no">("yes");
   const [checkedProposal, setCheckedProposal] = useState<string | null>(null);
+  const [pendingVotes, setPendingVotes] = useState<Record<string, string>>(() =>
+    Object.fromEntries(Object.keys(localStorage).filter((key) => key.startsWith(pendingVotePrefix)).map((key) => [key, localStorage.getItem(key) ?? ""])));
+
+  function updatePendingVote(key: string, hash?: string) {
+    if (hash) localStorage.setItem(key, hash);
+    else localStorage.removeItem(key);
+    setPendingVotes((current) => {
+      const next = { ...current };
+      if (hash) next[key] = hash;
+      else delete next[key];
+      return next;
+    });
+  }
 
   useEffect(() => {
     document.documentElement.lang = language;
@@ -93,8 +111,27 @@ function App() {
   async function refresh(showLoading = true) {
     if (showLoading) setLoading(true);
     try {
-      setSnapshot(await fetchSnapshot());
+      const next = await fetchSnapshot();
+      setSnapshot(next);
       setNotice((current) => current?.error ? null : current);
+      for (const key of Object.keys(localStorage).filter((key) => key.startsWith(pendingVotePrefix))) {
+        const hash = localStorage.getItem(key);
+        if (!hash) continue;
+        if (key.endsWith(":withdraw")) {
+          const transaction = await client.getTransactionNoCache(hash);
+          const indexed = transaction?.status === "committed" && !next.proposals.some((proposal) =>
+            proposal.votes.some((vote) => transaction.transaction.inputs.some((input) => input.previousOutput.eq(vote.cell.outPoint))));
+          if (indexed || transaction?.status === "rejected") updatePendingVote(key);
+          if (transaction?.status === "rejected") setNotice({ text: t("withdrawRejected", { hash }), error: true });
+          continue;
+        }
+        const indexed = next.proposals.some((proposal) => proposal.votes.some((vote) => vote.cell.outPoint.txHash === hash));
+        if (indexed) updatePendingVote(key);
+        else if ((await client.getTransactionNoCache(hash))?.status === "rejected") {
+          updatePendingVote(key);
+          setNotice({ text: t("voteRejected", { hash }), error: true });
+        }
+      }
     } catch (error) {
       setNotice({ text: t("readFailed", { error: String(error) }), error: true });
     } finally {
@@ -245,8 +282,9 @@ function App() {
         }
       }
       const result = await action(signer);
-      setNotice({ text: t("actionSuccess", { action: t(label), hash: result }), error: false });
+      setNotice({ text: t("actionSubmitted", { action: t(label), hash: result }), error: false });
       await waitForTransaction(client, result);
+      setNotice({ text: t("actionSuccess", { action: t(label), hash: result }), error: false });
       await refresh(false);
     } catch (error) {
       setNotice({ text: t("actionFailed", { action: t(label), error: String(error) }), error: true });
@@ -268,13 +306,17 @@ function App() {
   const finalized = proposals.filter((p) => p.data.status === 1);
 
   function actionButton(label: TranslationKey, key: string, action: (active: ccc.Signer) => Promise<string>, disabled = false, className = "button-secondary") {
-    return <button className={className} disabled={!!busy || disabled} onClick={() => void execute(key, label, action)}>{busy === key ? <LoaderCircle className="spin" size={16} /> : null}{t(label)}</button>;
+    return <button className={className} disabled={!!busy || disabled} onClick={() => void execute(key, label, action)}>{busy === key || label === "votePending" || label === "withdrawPending" ? <LoaderCircle className="spin" size={16} /> : null}{t(label)}</button>;
   }
 
   function proposalCard(proposal: ProposalView, mode: Page) {
     const { cell, data, origin, votes, counting } = proposal;
     const key = cell.outPoint.txHash;
     const myVote = votes.find((vote) => lock?.eq(vote.cell.cellOutput.lock));
+    const pendingKey = lock ? pendingVoteKey(proposal.id, lock) : "";
+    const pending = !!pendingVotes[pendingKey];
+    const withdrawKey = `${pendingKey}:withdraw`;
+    const withdrawing = !!pendingVotes[withdrawKey];
     const direction = mode === "challenger" ? 0 : 1;
     const matching = nonOverlappingCounting(counting.filter((entry) => entry.data.direction === direction && lock?.eq(entry.cell.cellOutput.lock)));
     const counted = matching.reduce((sum, entry) => sum + entry.data.voteAmount, 0n);
@@ -312,9 +354,20 @@ function App() {
       {mode === "voter" && myVote && <div className="vote-record"><Check size={16}/><span>{t("voted", { direction: t(myVote.data.direction === 1 ? "yes" : "no"), amount: ckb(myVote.data.voteAmount) })}</span><span className="muted">{t("blockNumber", { number: voteBlocks[`${myVote.cell.outPoint.txHash}:${myVote.cell.outPoint.index}`] ?? t("loading") })}</span></div>}
       {(mode === "initiator" || mode === "challenger") && matching.length > 0 && <div className="vote-record"><Check size={16}/><span>{t("countingSummary", { count: matching.length, amount: ckb(counted) })}</span></div>}
       <div className="proposal-actions">
-        {mode === "voter" && voteOpen && (myVote
-          ? actionButton("withdrawVote", `${key}-withdraw`, (s) => withdrawVote(s, config, { voteOutPoint: myVote.cell.outPoint }))
-          : <div className="vote-controls"><div className="segmented"><button className={voteChoice === "yes" ? "selected" : ""} onClick={() => setVoteChoice("yes")}><ThumbsUp size={15}/> {t("yes")}</button><button className={voteChoice === "no" ? "selected" : ""} onClick={() => setVoteChoice("no")}><ThumbsDown size={15}/> {t("no")}</button></div>{actionButton("castVote", `${key}-vote`, async (s) => (await castVote(s, config, { proposalOutPoint: cell.outPoint, direction: voteChoice })).txHash, false, "button-primary")}</div>)}
+        {mode === "voter" && voteOpen && (myVote || withdrawing
+          ? actionButton(withdrawing ? "withdrawPending" : "withdrawVote", `${key}-withdraw`, async (s) => {
+            if (localStorage.getItem(withdrawKey)) throw new Error(t("withdrawPending"));
+            if (!myVote) throw new Error(t("withdrawPending"));
+            const hash = await withdrawVote(s, config, { voteOutPoint: myVote.cell.outPoint });
+            updatePendingVote(withdrawKey, hash);
+            return hash;
+          }, withdrawing)
+          : <div className="vote-controls"><div className="segmented"><button className={voteChoice === "yes" ? "selected" : ""} onClick={() => setVoteChoice("yes")}><ThumbsUp size={15}/> {t("yes")}</button><button className={voteChoice === "no" ? "selected" : ""} onClick={() => setVoteChoice("no")}><ThumbsDown size={15}/> {t("no")}</button></div>{actionButton(pending ? "votePending" : "castVote", `${key}-vote`, async (s) => {
+            if (localStorage.getItem(pendingKey)) throw new Error(t("votePending"));
+            const result = await castVote(s, config, { proposalOutPoint: cell.outPoint, direction: voteChoice, preventDuplicate: true });
+            updatePendingVote(pendingKey, result.txHash);
+            return result.txHash;
+          }, pending, "button-primary")}</div>)}
         {mode === "initiator" && data.status === 0 && <>
           <button className="button-secondary" aria-expanded={checkedProposal === proposal.id} onClick={() => setCheckedProposal((current) => current === proposal.id ? null : proposal.id)}>{t("checkPass")}</button>
           {actionButton("countYes", `${key}-count-yes`, async (s) => (await createCountingCell(s, config, { proposalOutPoint: cell.outPoint, direction: "yes", startHash: 0, endHash: 65535 })).txHash, !canCount || !hasYesVotes || counted >= threshold || hasFullRangeCounting)}
