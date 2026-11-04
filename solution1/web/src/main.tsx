@@ -335,12 +335,15 @@ function App() {
     const hasFullRangeCounting = counting.some((entry) => entry.data.direction === direction && lock?.eq(entry.cell.cellOutput.lock) && entry.data.startHash === 0 && entry.data.endHash === 65535);
     const noYesVotes = !hasYesVotes && !hasYesCounting;
     const recycleAt = end + (settings?.challengeTime ?? 0n);
+    const recycleHint = tip >= recycleAt
+      ? t(voteOpen ? "recycleOrWait" : "recycleReady")
+      : t("recycleLater", { time: remaining(recycleAt, tip, language) });
     const threshold = settings?.yesThreshold ?? 0n;
     const checkResult = counted >= threshold && matching.length > 0
       ? t("countedPass", { amount: ckb(counted), next: t(canCount ? "readyToFinalize" : "waitToCount") })
       : noYesVotes
-        ? t("noYesVotesMessage", { next: tip >= recycleAt ? t(voteOpen ? "recycleOrWait" : "recycleReady") : t("recycleLater", { time: remaining(recycleAt, tip, language) }) })
-        : t(proposal.yes >= threshold ? "votesMeetThreshold" : "votesBelowThreshold", { amount: ckb(proposal.yes), threshold: ckb(threshold) });
+        ? t("noYesVotesMessage", { next: recycleHint })
+        : t(proposal.yes >= threshold ? "votesMeetThreshold" : "votesBelowThreshold", { amount: ckb(proposal.yes), threshold: ckb(threshold) }) + (proposal.yes < threshold ? ` ${recycleHint}` : "");
     return <article className="proposal" key={`${key}:${cell.outPoint.index}`}>
       <div className="proposal-top"><span className={`tag tag-${data.status}`}>{t((["openStatus", "finalizedStatus", "passedStatus"] as const)[data.status] ?? "unknownStatus")}</span><span className="mono muted">{proposal.id}</span></div>
       <h3>{data.description || t("unnamedProposal")}</h3>
@@ -351,6 +354,7 @@ function App() {
         <div><span>{t("noVotes")}</span><strong className="no">{ckb(proposal.no)} <small>CKB</small></strong></div>
       </div>
       {data.status !== 2 && <div className="countdown"><Clock3 size={16}/><span>{t(countdown.label)}</span><strong>{countdown.target === null ? t("loadingHeader") : remaining(countdown.target, tip, language)}{countdown.target !== null && tip < countdown.target && <><br/><small>{t(countdown.estimate, { date: estimatedDate(countdown.target, tip, language) })}</small></>}</strong></div>}
+      {mode === "initiator" && data.status === 0 && <div className="countdown"><Clock3 size={16}/><span>{t("recycle")}</span><strong>{tip >= recycleAt ? t("recycleReady") : remaining(recycleAt, tip, language)}{tip < recycleAt && <><br/><small>{t("estimatedRecycle", { date: estimatedDate(recycleAt, tip, language) })}</small></>}</strong></div>}
       {mode === "voter" && myVote && <div className="vote-record"><Check size={16}/><span>{t("voted", { direction: t(myVote.data.direction === 1 ? "yes" : "no"), amount: ckb(myVote.data.voteAmount) })}</span><span className="muted">{t("blockNumber", { number: voteBlocks[`${myVote.cell.outPoint.txHash}:${myVote.cell.outPoint.index}`] ?? t("loading") })}</span></div>}
       {(mode === "initiator" || mode === "challenger") && matching.length > 0 && <div className="vote-record"><Check size={16}/><span>{t("countingSummary", { count: matching.length, amount: ckb(counted) })}</span></div>}
       <div className="proposal-actions">
@@ -372,7 +376,7 @@ function App() {
           <button className="button-secondary" aria-expanded={checkedProposal === proposal.id} onClick={() => setCheckedProposal((current) => current === proposal.id ? null : proposal.id)}>{t("checkPass")}</button>
           {actionButton("countYes", `${key}-count-yes`, async (s) => (await createCountingCell(s, config, { proposalOutPoint: cell.outPoint, direction: "yes", startHash: 0, endHash: 65535 })).txHash, !canCount || !hasYesVotes || counted >= threshold || hasFullRangeCounting)}
           {actionButton("finalize", `${key}-finalize`, (s) => finalizeProposal(s, config, { proposalOutPoint: cell.outPoint, countingOutPoints: matching.map((entry) => entry.cell.outPoint) }), !canCount || counted < (settings?.yesThreshold ?? 0n))}
-          {tip >= recycleAt && actionButton("recycle", `${key}-recycle`, (s) => recycleProposal(s, config, { proposalOutPoint: cell.outPoint }))}
+          {actionButton("recycle", `${key}-recycle`, (s) => recycleProposal(s, config, { proposalOutPoint: cell.outPoint }), tip < recycleAt)}
         </>}
         {mode === "initiator" && data.status === 1 && data.recipientLockHash === recipientHash && actionButton("pass", `${key}-pass`, (s) => passProposal(s, config, { proposalOutPoint: cell.outPoint }), challengeEnd === null || tip < challengeEnd)}
         {mode === "challenger" && <>
